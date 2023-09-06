@@ -12,16 +12,17 @@
 #include <vector>
 using namespace std;
 
+#define NDEBUG
+
 // ---------------------------B+树的类-------------------------
 /**
  * @brief B+树节点基类
  * @tparam T 关键字类型，目前仅支持整型和string类型
  */
-template <typename T>
-class BNode {
+template <typename T> class BNode {
   typedef typename vector<T>::size_type size_type;
 
- public:
+public:
   BNode() : _keyNum(0), _isLeaf(false) {}
   BNode(bool isLeaf) : _keyNum(0), _isLeaf(isLeaf) {}
   BNode(const BNode<T> &bnode)
@@ -103,6 +104,9 @@ class BNode {
     size_type mid = (l + r) / 2;
     while (l <= r) {
       mid = (l + r) / 2;
+      if (mid == _keyNum) {
+        break;
+      }
       if (_key[mid] == k) {
         return mid;
       } else if (_key[mid] < k) {
@@ -121,24 +125,26 @@ class BNode {
   /* 查找关键字 */
   virtual pair<T, uint64_t *> searchKey(const T &k) const = 0;
   /* 范围查询关键字 */
-  virtual bool searchKeyForRange(const T &l, const T &r,
+  virtual void searchKeyForRange(const T &l, const T &r,
+                                 vector<pair<T, uint64_t>> &seq,
                                  const bool &continueFlag = false) const = 0;
   /* 输出所有关键字 */
-  virtual void outputAllKeys() const = 0;
+  virtual void outputAllKeys(vector<T> &seq) const = 0;
   /* 关键字分裂 */
   virtual void keySplit(const bool &isLeft, const size_type &MAX_SIZE) = 0;
   /* 获取关键字 */
   T getKey(const size_type &index) const { return _key[index]; }
   /* 借关键字 */
-  virtual T borrowKey(BNode<T> *const &silbing, const bool &isRight) = 0;
+  virtual T borrowKey(BNode<T> *const &silbing, const bool &isRight,
+                      const T &key) = 0;
   /* 获取关键字数组 */
   vector<T> getAllKeys() const { return _key; }
 
- private:
+private:
   size_type _keyNum;
   const bool _isLeaf;
 
- protected:
+protected:
   vector<T> _key;
 };
 
@@ -148,26 +154,27 @@ class BNode {
  *
  *
  */
-template <typename T = int>
-class LeafBNode : public BNode<T> {
+template <typename T = int> class LeafBNode : public BNode<T> {
   typedef typename vector<T>::size_type size_type;
 
- public:
+public:
   LeafBNode() : BNode<T>(true), _next(nullptr), _prev(nullptr){};
   LeafBNode(const LeafBNode &leafbnode)
-      : BNode<T>(leafbnode),
-        _next(leafbnode._next),
-        _prev(leafbnode._prev),
+      : BNode<T>(leafbnode), _next(leafbnode._next), _prev(leafbnode._prev),
         _value(leafbnode._value) {}
 
   /* 分裂用的特殊构造函数 */
   LeafBNode(LeafBNode *&leafbnode, const size_type &MAX_SIZE)
-      : BNode<T>(leafbnode, MAX_SIZE / 2),
-        _next(leafbnode->_next),
+      : BNode<T>(leafbnode, MAX_SIZE / 2), _next(leafbnode->_next),
         _prev(leafbnode),
         _value(make_move_iterator(leafbnode->_value.begin() + MAX_SIZE / 2),
                make_move_iterator(leafbnode->_value.end())) {}
-  ~LeafBNode() {}
+  ~LeafBNode() {
+    for (auto &value : _value) {
+      delete value;
+      value = nullptr;
+    }
+  }
 
   /* 获取右兄弟 */
   LeafBNode *getNext() const { return _next; }
@@ -227,31 +234,31 @@ class LeafBNode : public BNode<T> {
   }
 
   /* 输出所有关键字 */
-  void outputAllKeys() const override {
+  void outputAllKeys(vector<T> &seq) const override {
     cout << " [";
     for (size_type i = 0; i < this->getKeyNum(); ++i) {
+      seq.push_back(this->_key[i]);
       cout << " <" << this->_key[i] << ", " << *_value[i] << ">";
     }
     cout << " ]";
   }
 
   /* 范围查询关键字 */
-  bool searchKeyForRange(const T &l, const T &r,
+  void searchKeyForRange(const T &l, const T &r, vector<pair<T, uint64_t>> &seq,
                          const bool &continueFlag = false) const override {
     size_type index = 0;
     if (!continueFlag) {
       index = this->getInsertIndex(l);
     }
-    size_type start = index;
-    while (index < this->getKeyNum() && this->_key[index] < r) {
-      cout << " <" << this->_key[index] << ", " << *_value[index] << ">";
+
+    while (index < this->getKeyNum() && this->getKey(index) < r) {
+      seq.push_back(make_pair(this->getKey(index), *_value[index]));
+      cout << " <" << this->getKey(index) << ", " << *_value[index] << ">";
       ++index;
     }
     if (_next && index == this->getKeyNum()) {
-      _next->searchKeyForRange(l, r, true);
-      return true;
+      _next->searchKeyForRange(l, r, seq, true);
     }
-    return start != index;
   }
 
   /* 分裂关键字和值 */
@@ -267,7 +274,8 @@ class LeafBNode : public BNode<T> {
   }
 
   /* 借关键字 */
-  T borrowKey(BNode<T> *const &silbing, const bool &isRight) override {
+  T borrowKey(BNode<T> *const &silbing, const bool &isRight,
+              const T &key) override {
     pair<T, uint64_t *> data =
         static_cast<LeafBNode<T> *>(silbing)->provideKey(isRight);
     if (isRight) {
@@ -316,8 +324,10 @@ class LeafBNode : public BNode<T> {
   void mergeValues(vector<uint64_t *> &&values) noexcept {
     _value.insert(_value.end(), values.begin(), values.end());
   }
+  /* 合并时，value移动后清空value的vector，以免析构的时候把值清了*/
+  void clearValues() { _value.clear(); }
 
- private:
+private:
   LeafBNode *_next;
   LeafBNode *_prev;
   vector<uint64_t *> _value;
@@ -329,11 +339,10 @@ class LeafBNode : public BNode<T> {
  *
  *
  */
-template <typename T>
-class InnerBNode : public BNode<T> {
+template <typename T> class InnerBNode : public BNode<T> {
   typedef typename vector<T>::size_type size_type;
 
- public:
+public:
   InnerBNode() : BNode<T>(false) {}
   InnerBNode(const InnerBNode<T> &innerbnode)
       : BNode<T>(innerbnode), p(innerbnode.p) {}
@@ -343,11 +352,7 @@ class InnerBNode : public BNode<T> {
   InnerBNode(InnerBNode<T> *&innerbnode, const size_type &MAX_SIZE)
       : BNode<T>(innerbnode, MAX_SIZE / 2 + 1),
         p(make_move_iterator(innerbnode->p.begin() + MAX_SIZE / 2 + 1),
-          make_move_iterator(innerbnode->p.end())) {
-    this->_key.insert(this->_key.begin(),
-                      innerbnode->_key.begin() + MAX_SIZE / 2 + 1,
-                      innerbnode->_key.end());
-  }
+          make_move_iterator(innerbnode->p.end())) {}
   //顶层分裂调用
   InnerBNode(BNode<T> *const &root, const size_type &MAX_SIZE)
       : BNode<T>(false) {
@@ -382,13 +387,14 @@ class InnerBNode : public BNode<T> {
   }
 
   /* 合并某孩子节点 */
-  void merge(BNode<T> *const &left, BNode<T> *const &right, const T &key) {
+  void merge(BNode<T> *const &left, BNode<T> *const &right, const T &&key) {
     if (left->isLeaf()) {
       //叶子节点的合并
       LeafBNode<T> *leafLeft = static_cast<LeafBNode<T> *>(left);
       LeafBNode<T> *leafRight = static_cast<LeafBNode<T> *>(right);
       leafLeft->mergeKeys(leafRight->getAllKeys());
       leafLeft->mergeValues(leafRight->getAllValues());
+      leafRight->clearValues();
       leafLeft->setNext(leafRight->getNext());
       if (leafRight->getNext()) {
         leafRight->getNext()->setPrev(leafLeft);
@@ -397,7 +403,7 @@ class InnerBNode : public BNode<T> {
       //非叶子节点的合并
       InnerBNode<T> *innerLeft = static_cast<InnerBNode<T> *>(left);
       InnerBNode<T> *innerRight = static_cast<InnerBNode<T> *>(right);
-      innerLeft->mergeKeys(innerRight->getAllKeys(), key);
+      innerLeft->mergeKeys(innerRight->getAllKeys(), move(key));
       innerLeft->mergePs(innerRight->getAllPs());
     }
     delete right;
@@ -406,7 +412,7 @@ class InnerBNode : public BNode<T> {
   /* 搜索目标key值 */
   pair<T, uint64_t *> searchKey(const T &k) const override {
     size_type index = this->getInsertIndex(k);
-    if (k == this->_key[index]) {
+    if (index < this->getKeyNum() && k == this->_key[index]) {
       return p[index + 1]->searchKey(k);
     } else {
       return p[index]->searchKey(k);
@@ -432,7 +438,7 @@ class InnerBNode : public BNode<T> {
   T deleteKey(const T &k, const size_type &MAX_SIZE) override {
     size_type deleteIndex = this->getInsertIndex(k);
     T newKey;
-    if (k == this->_key[deleteIndex]) {
+    if (deleteIndex < this->getKeyNum() && k == this->_key[deleteIndex]) {
       ++deleteIndex;
       //遇见关键字向右找
       newKey = p[deleteIndex]->deleteKey(k, MAX_SIZE);
@@ -445,13 +451,13 @@ class InnerBNode : public BNode<T> {
       if (deleteIndex + 1 < p.size() &&
           p[deleteIndex + 1]->getKeyNum() > ceil(1.0 * MAX_SIZE / 2) - 1) {
         //找右边兄弟借
-        this->_key[deleteIndex] =
-            p[deleteIndex]->borrowKey(p[deleteIndex + 1], true);
+        this->_key[deleteIndex] = p[deleteIndex]->borrowKey(
+            p[deleteIndex + 1], true, this->_key[deleteIndex]);
       } else if (deleteIndex && p[deleteIndex - 1]->getKeyNum() >
                                     ceil(1.0 * MAX_SIZE / 2) - 1) {
         //找左边兄弟借
-        this->_key[deleteIndex - 1] =
-            p[deleteIndex]->borrowKey(p[deleteIndex - 1], false);
+        this->_key[deleteIndex - 1] = p[deleteIndex]->borrowKey(
+            p[deleteIndex - 1], false, this->_key[deleteIndex - 1]);
       } else if (deleteIndex + 1 < p.size()) {
         //跟右兄弟合并
         merge(p[deleteIndex], p[deleteIndex + 1], this->getKey(deleteIndex));
@@ -477,24 +483,25 @@ class InnerBNode : public BNode<T> {
   }
 
   /* 范围查询关键字 */
-  bool searchKeyForRange(const T &l, const T &r,
+  void searchKeyForRange(const T &l, const T &r, vector<pair<T, uint64_t>> &seq,
                          const bool &continueFlag = false) const override {
     size_type index = this->getInsertIndex(l);
-    if (l == this->_key[index]) {
-      return p[index + 1]->searchKeyForRange(l, r);
+    if (index < this->getKeyNum() && l == this->getKey(index)) {
+      p[index + 1]->searchKeyForRange(l, r, seq);
     } else {
-      return p[index]->searchKeyForRange(l, r);
+      p[index]->searchKeyForRange(l, r, seq);
     }
   }
 
   /* 输出所有关键字 */
-  void outputAllKeys() const override {
+  void outputAllKeys(vector<T> &seq) const override {
     cout << " [";
     for (size_type i = 0; i < this->getKeyNum(); ++i) {
       if (i) {
         cout << " ";
       }
       cout << this->_key[i];
+      seq.push_back(this->_key[i]);
     }
     cout << "]";
   }
@@ -515,14 +522,15 @@ class InnerBNode : public BNode<T> {
   size_type getChildNum() const { return p.size(); }
 
   /* 借关键字 */
-  T borrowKey(BNode<T> *const &silbing, const bool &isRight) override {
+  T borrowKey(BNode<T> *const &silbing, const bool &isRight,
+              const T &key) override {
     pair<T, BNode<T> *> data =
         static_cast<InnerBNode<T> *>(silbing)->provideKey(isRight);
     if (isRight) {
-      this->_key.push_back(data.first);
+      this->_key.push_back(key);
       p.push_back(data.second);
     } else {
-      this->_key.insert(this->_key.begin(), data.first);
+      this->_key.insert(this->_key.begin(), key);
       p.insert(p.begin(), data.second);
     }
     this->updateKeyNum();
@@ -534,11 +542,15 @@ class InnerBNode : public BNode<T> {
     T key;
     BNode<T> *child;
     if (isRight) {
-      key = *this->_key.erase(this->_key.begin());
-      child = *p.erase(p.begin());
+      key = this->getKey(0);
+      this->_key.erase(this->_key.begin());
+      child = p[0];
+      p.erase(p.begin());
     } else {
-      key = *this->_key.erase(this->_key.end() - 1);
-      child = *p.erase(p.end() - 1);
+      key = this->getKey(this->getKeyNum() - 1);
+      this->_key.erase(this->_key.end() - 1);
+      child = p[p.size() - 1];
+      p.erase(p.end() - 1);
     }
     this->updateKeyNum();
 #ifndef NDEBUG
@@ -550,29 +562,28 @@ class InnerBNode : public BNode<T> {
   /* 获取指针的数组 */
   vector<BNode<T> *> getAllPs() const { return p; }
   /* 合并关键字 */
-  void mergeKeys(const vector<T> &keys, const T &key) {
+  void mergeKeys(vector<T> &&keys, const T &&key) noexcept {
     this->_key.push_back(key);
     this->_key.insert(this->_key.end(), keys.begin(), keys.end());
     this->updateKeyNum();
   }
   /* 合并指针 */
-  void mergePs(const vector<BNode<T> *> &ps) {
+  void mergePs(vector<BNode<T> *> &&ps) noexcept {
     p.insert(p.end(), ps.begin(), ps.end());
   }
 
- private:
+private:
   vector<BNode<T> *> p;
 };
 
-template <typename T>
-class BPlusTree {
+template <typename T> class BPlusTree {
   typedef typename vector<T>::size_type size_type;
 
- public:
+public:
   BPlusTree(const size_type &max_size) : _MAX_SIZE(max_size) {
     B_Plus_Tree_Create();
   }
-  ~BPlusTree() { delete _root; }
+  ~BPlusTree() { B_Plus_Tree_Clear(); }
 
   /**
    * @brief 搜索B树
@@ -614,6 +625,9 @@ class BPlusTree {
       cout << "无法删除" << endl;
       return;
     }
+#ifndef NDEBUG
+    cout << "------------------开始删除<" << k << ">------------------" << endl;
+#endif
     _root->deleteKey(k, _MAX_SIZE);
     //顶层没节点了
     if (_root->getKeyNum() == 0 && !_root->isLeaf()) {
@@ -630,11 +644,15 @@ class BPlusTree {
    * @param l 范围左域
    * @param r 范围右域
    */
-  void B_Plus_Tree_Search_For_Range(const T &l, const T &r) const {
-    if (!_root->getKeyNum() || !_root->searchKeyForRange(l, r)) {
+  vector<pair<T, uint64_t>> B_Plus_Tree_Search_For_Range(const T &l,
+                                                         const T &r) const {
+    vector<pair<T, uint64_t>> rangeSearchResult;
+    _root->searchKeyForRange(l, r, rangeSearchResult);
+    if (rangeSearchResult.empty()) {
       cout << "没有该范围的关键字";
     }
     cout << endl;
+    return rangeSearchResult;
   }
 
   /**
@@ -643,15 +661,16 @@ class BPlusTree {
    * @tparam x 树的根节点
    *
    */
-  void BFS() const {
+  vector<T> BFS() const {
     typedef typename vector<T>::size_type size_type;
     queue<BNode<T> *> q;
     q.push(_root);
     BNode<T> *lastLayer = _root;
+    vector<T> bfsSeq;
     while (!q.empty()) {
       BNode<T> *temp = q.front();
       q.pop();
-      temp->outputAllKeys();
+      temp->outputAllKeys(bfsSeq);
       if (!temp->isLeaf()) {
         InnerBNode<T> *tempInner = static_cast<InnerBNode<T> *>(temp);
         for (size_type i = 0; i < tempInner->getChildNum(); ++i) {
@@ -664,20 +683,44 @@ class BPlusTree {
       }
     }
     cout << endl;
+    return bfsSeq;
   }
 
   /**
    * @brief 全遍历叶子节点
    *
    */
-  void OutPutAllTheKeys() const {
+  vector<T> OutPutAllTheKeys() const {
     const LeafBNode<T> *p = _Head;
+    vector<T> allKeySeq;
     while (p) {
-      p->outputAllKeys();
+      p->outputAllKeys(allKeySeq);
       p = p->getNext();
     }
     cout << endl;
+    return allKeySeq;
   }
+  void B_Plus_Tree_Reset() {
+    B_Plus_Tree_Clear();
+    B_Plus_Tree_Create();
+  }
+
+private:
+  /**
+   * @brief 创建一个空的B树
+   * @return 指向该节点的指针
+   * @tparam T 关键字类型 默认为int 目前仅支持整型和string类型
+   */
+  void B_Plus_Tree_Create() {
+#ifndef NDEBUG
+    cout << "---------------创建一课空的B+树--------------" << endl;
+#endif
+    if (!_root) {
+      _root = new LeafBNode<T>();
+      setHead();
+    }
+  }
+  void setHead() { _Head = static_cast<LeafBNode<T> *>(_root); }
   /**
    * @brief 利用层序遍历清空树
    */
@@ -704,27 +747,8 @@ class BPlusTree {
 #ifndef NDEBUG
     cout << "----------------B+树已清空----------------" << endl;
 #endif
-    B_Plus_Tree_Create();
   }
-
- private:
-  /**
-   * @brief 创建一个空的B树
-   * @return 指向该节点的指针
-   * @tparam T 关键字类型 默认为int 目前仅支持整型和string类型
-   */
-  void B_Plus_Tree_Create() {
-#ifndef NDEBUG
-    cout << "---------------创建一课空的B+树--------------" << endl;
-#endif
-    if (!_root) {
-      _root = new LeafBNode<T>();
-      setHead();
-    }
-  }
-  void setHead() { _Head = static_cast<LeafBNode<T> *>(_root); }
-
-  BNode<T> *_root;
+  BNode<T> *_root = nullptr;
   const size_type _MAX_SIZE;
   LeafBNode<T> *_Head;
 };

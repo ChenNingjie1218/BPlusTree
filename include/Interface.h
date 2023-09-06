@@ -1,12 +1,13 @@
 #ifndef INTERFACE_H
 #define INTERFACE_H
-#include "B_Plus_Tree.h"
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
 #include <map>
 #include <sstream>
 #include <string>
+
+#include "B_Plus_Tree.h"
 /**
  * @brief 初始化指令列表
  */
@@ -19,7 +20,8 @@ void help();
 /**
  * @brief 操作接口
  */
-template <typename T> void interface() {
+template <typename T>
+void interface() {
   interfaceInit();
   string cmd;
   string option;
@@ -67,6 +69,7 @@ template <typename T> void interface() {
       line >> key;
       tree->B_Plus_Tree_Delete(key);
     } else if (option == string("quit")) {
+      delete tree;
       break;
     } else if (option == string("search")) {
       if (!tree) {
@@ -109,7 +112,8 @@ template <typename T> void interface() {
       if (tree) {
         cout << "已经创建了一个树" << endl;
       }
-      tree->B_Plus_Tree_Clear();
+      delete tree;
+      tree = nullptr;
     } else if (option == string("help")) {
       help();
     } else if (option == string("cls")) {
@@ -119,10 +123,12 @@ template <typename T> void interface() {
         cout << "已经创建了一个树" << endl;
       }
       int maxDegree;
-      maxDegree = 3; //默认3
+      maxDegree = 3;  //默认3
       line >> maxDegree;
       // maxDegree = 4;
       tree = new BPlusTree<T>(maxDegree);
+    } else if (option == string("reset")) {
+      tree->B_Plus_Tree_Reset();
     } else {
       cout << "还没有这个指令" << endl;
     }

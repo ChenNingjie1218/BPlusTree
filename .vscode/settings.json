@@ -1,12 +1,13 @@
 {
-    // "C_Cpp.intelliSenseEngine": "disabled",
+    "C_Cpp.intelliSenseEngine": "disabled",
     "cmake.configureOnOpen": true,
     "files.associations": {
         "vector": "cpp",
-        "utility": "cpp"
+        "utility": "cpp",
+        "iterator": "cpp"
     },
-    "[cpp]" : {
-        "editor.defaultFormatter":"xaver.clang-format"
+    "[cpp]": {
+        "editor.defaultFormatter": "xaver.clang-format"
     },
-    "editor.formatOnSave":true,
+    "editor.formatOnSave": true,
 }

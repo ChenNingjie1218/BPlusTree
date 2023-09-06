@@ -13,6 +13,7 @@ void interfaceInit() {
   op["clear"] = "清空树 eg:clear";
   op["cls"] = "清屏 eg:cls";
   op["create"] = "创建一课空树 eg:create 3";
+  op["reset"] = "重置树 eg:reset";
 }
 
 void help() {
