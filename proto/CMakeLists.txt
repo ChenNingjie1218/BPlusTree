@@ -1,0 +1,1 @@
+add_library(bplustree_pb STATIC bplustree.pb.cc)

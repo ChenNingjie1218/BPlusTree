@@ -14,6 +14,8 @@ void interfaceInit() {
   op["cls"] = "清屏 eg:cls";
   op["create"] = "创建一课空树 eg:create 3";
   op["reset"] = "重置树 eg:reset";
+  op["serialize"] = "序列化树 eg:serialize";
+  op["deserialize"] = "反序列化某个树 eg:serialize testTree";
 }
 
 void help() {

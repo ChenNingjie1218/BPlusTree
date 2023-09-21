@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package bplustree;
+
+message BPlusTree{
+    optional uint64 _MAX_SIZE= 1;
+    optional string _name = 2;
+    optional string _root = 3;
+    optional string _head = 4;
+}
+
+message BNode{
+    optional bool _isLeaf = 1;
+    optional uint64 _keyNum = 2;
+    optional string _prev = 3;
+    optional string _next = 4;
+    optional string _uuid = 5; //节点uuid
+    repeated int32 _key = 6;
+    repeated uint64 _value = 7;
+    repeated string _child = 8;
+}

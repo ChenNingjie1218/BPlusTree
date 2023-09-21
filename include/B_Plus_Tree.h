@@ -1,32 +1,48 @@
 #ifndef B_PLUS_TREE_H
 #define B_PLUS_TREE_H
+#include <uuid/uuid.h>
+
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <iterator>
 #include <memory>
 #include <queue>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
+
+#include "bplustree.pb.h"
 using namespace std;
 
 #define NDEBUG
-
 // ---------------------------B+树的类-------------------------
 /**
  * @brief B+树节点基类
  * @tparam T 关键字类型，目前仅支持整型和string类型
  */
-template <typename T> class BNode {
+template <typename T>
+class BNode {
   typedef typename vector<T>::size_type size_type;
 
-public:
+ public:
   BNode() : _keyNum(0), _isLeaf(false) {}
   BNode(bool isLeaf) : _keyNum(0), _isLeaf(isLeaf) {}
   BNode(const BNode<T> &bnode)
       : _keyNum(bnode._keyNum), _isLeaf(bnode._isLeaf), _key(bnode._key) {}
+  /*序列化的构造函数*/
+  BNode(const bplustree::BNode &pb_bnode)
+      : _keyNum(pb_bnode._keynum()),
+        _isLeaf(pb_bnode._isleaf()),
+        _key(begin(pb_bnode._key()), end(pb_bnode._key())) {
+    char str[36];
+    strncpy(str, pb_bnode._uuid().c_str(), 36);
+    uuid_parse(str, _uuid);
+  }
   virtual ~BNode() {}
 
   /**
@@ -139,13 +155,23 @@ public:
                       const T &key) = 0;
   /* 获取关键字数组 */
   vector<T> getAllKeys() const { return _key; }
+  /* 序列化 */
+  virtual void Serialize(string dir) = 0;
+  /* 获取uuid */
+  void getUUID(uuid_t &uuid) {
+    if (uuid_is_null(_uuid)) {
+      uuid_generate(_uuid);
+    }
+    uuid_copy(uuid, _uuid);
+  }
+  /* 设置uuid */
+  void setUUID(uuid_t &uuid) { uuid_copy(_uuid, uuid); }
 
-private:
+ protected:
   size_type _keyNum;
   const bool _isLeaf;
-
-protected:
   vector<T> _key;
+  uuid_t _uuid = "";
 };
 
 /**
@@ -154,21 +180,48 @@ protected:
  *
  *
  */
-template <typename T = int> class LeafBNode : public BNode<T> {
+template <typename T = int>
+class LeafBNode : public BNode<T> {
   typedef typename vector<T>::size_type size_type;
 
-public:
+ public:
   LeafBNode() : BNode<T>(true), _next(nullptr), _prev(nullptr){};
   LeafBNode(const LeafBNode &leafbnode)
-      : BNode<T>(leafbnode), _next(leafbnode._next), _prev(leafbnode._prev),
+      : BNode<T>(leafbnode),
+        _next(leafbnode._next),
+        _prev(leafbnode._prev),
         _value(leafbnode._value) {}
 
   /* 分裂用的特殊构造函数 */
   LeafBNode(LeafBNode *&leafbnode, const size_type &MAX_SIZE)
-      : BNode<T>(leafbnode, MAX_SIZE / 2), _next(leafbnode->_next),
+      : BNode<T>(leafbnode, MAX_SIZE / 2),
+        _next(leafbnode->_next),
         _prev(leafbnode),
         _value(make_move_iterator(leafbnode->_value.begin() + MAX_SIZE / 2),
                make_move_iterator(leafbnode->_value.end())) {}
+  /*序列化的构造函数*/
+  LeafBNode(const bplustree::BNode &pb_bnode)
+      : BNode<T>(pb_bnode), _next(nullptr), _prev(nullptr) {
+    for (int i = 0; i < pb_bnode._value_size(); ++i) {
+      _value.push_back(new uint64_t(pb_bnode._value(i)));
+    }
+    // if (pb_bnode.has__next()) {
+    //   string next = pb_bnode._next();
+    //   ifstream fr;
+    //   fr.open("./bin/" + next);
+    //   if (fr) {
+    //     string str;
+    //     fr >> str;
+    //     bplustree::BNode pb_bnode;
+    //     pb_bnode.ParseFromString(str);
+    //     _next = new LeafBNode<T>(pb_bnode, this);
+    //     fr.close();
+    //   } else {
+    //     cerr << "open error:" << next << endl;
+    //   }
+    // }
+    // _prev = prev;
+  }
   ~LeafBNode() {
     for (auto &value : _value) {
       delete value;
@@ -199,7 +252,7 @@ public:
   /* 搜索关键字 */
   pair<T, uint64_t *> searchKey(const T &k) const override {
     size_type keyindex = this->getKeyIndex(k);
-    if (this->getKeyNum() != keyindex) {
+    if (this->_keyNum != keyindex) {
       return make_pair(k, _value[keyindex]);
     }
     return make_pair(k, nullptr);
@@ -224,8 +277,8 @@ public:
       delete _value[removeIndex];
       _value.erase(_value.begin() + removeIndex);
       //返回更新的关键字
-      if (removeIndex < this->getKeyNum()) {
-        return this->getKey(removeIndex);
+      if (removeIndex < this->_keyNum) {
+        return this->_key[removeIndex];
       } else if (_next) {
         return _next->getKey(0);
       }
@@ -236,7 +289,7 @@ public:
   /* 输出所有关键字 */
   void outputAllKeys(vector<T> &seq) const override {
     cout << " [";
-    for (size_type i = 0; i < this->getKeyNum(); ++i) {
+    for (size_type i = 0; i < this->_keyNum; ++i) {
       seq.push_back(this->_key[i]);
       cout << " <" << this->_key[i] << ", " << *_value[i] << ">";
     }
@@ -251,12 +304,12 @@ public:
       index = this->getInsertIndex(l);
     }
 
-    while (index < this->getKeyNum() && this->getKey(index) < r) {
-      seq.push_back(make_pair(this->getKey(index), *_value[index]));
-      cout << " <" << this->getKey(index) << ", " << *_value[index] << ">";
+    while (index < this->_keyNum && this->_key[index] < r) {
+      seq.push_back(make_pair(this->_key[index], *_value[index]));
+      cout << " <" << this->_key[index] << ", " << *_value[index] << ">";
       ++index;
     }
-    if (_next && index == this->getKeyNum()) {
+    if (_next && index == this->_keyNum) {
       _next->searchKeyForRange(l, r, seq, true);
     }
   }
@@ -296,7 +349,7 @@ public:
     T key;
     uint64_t *value;
     if (isRight) {
-      key = this->getKey(0);
+      key = this->_key[0];
       this->_key.erase(this->_key.begin());
       value = _value[0];
       _value.erase(_value.begin());
@@ -326,12 +379,68 @@ public:
   }
   /* 合并时，value移动后清空value的vector，以免析构的时候把值清了*/
   void clearValues() { _value.clear(); }
+  uint64_t getValue(size_type &index) {
+    if (index < this->_keyNum) {
+      return *_value[index];
+    } else {
+      cerr << "读value越界" << endl;
+      return 0;
+    }
+  }
 
-private:
+  /* 序列化 */
+  void Serialize(string dir) override {
+    bplustree::BNode pb_bnode;
+    pb_bnode.set__isleaf(this->_isLeaf);
+    pb_bnode.set__keynum(this->_keyNum);
+    uuid_t uuid;
+    char str[36];
+
+    // prev
+    if (_prev) {
+      _prev->getUUID(uuid);
+      uuid_unparse(uuid, str);
+      string prev(begin(str), end(str));
+      pb_bnode.set__prev(prev);
+    }
+    if (_next) {  // next
+      _next->getUUID(uuid);
+      uuid_unparse(uuid, str);
+      string next(begin(str), end(str));
+      pb_bnode.set__next(next);
+    }
+    // uuid
+    uuid_unparse(this->_uuid, str);
+    string name(begin(str), end(str));
+    pb_bnode.set__uuid(name);
+    for (size_t i = 0; i < this->_keyNum; ++i) {
+      pb_bnode.add__key(this->_key[i]);
+      pb_bnode.add__value(*_value[i]);
+    }
+    ofstream fw;
+    fw.open(dir + name, ios::out | ios::binary);
+    if (fw) {
+      string serialize_data;
+      pb_bnode.SerializeToString(&serialize_data);
+      fw << serialize_data;
+      fw.close();
+    } else {
+      cerr << "序列化时" << dir + name << "打开失败" << endl;
+    }
+  }
+
+ private:
   LeafBNode *_next;
   LeafBNode *_prev;
   vector<uint64_t *> _value;
 };
+
+/* 反序列化时存prev */
+template <typename T>
+LeafBNode<T> *deserialize_prev = nullptr;
+/* 反序列化时存head */
+template <typename T>
+LeafBNode<T> *deserialize_head = nullptr;
 
 /**
  * @brief 非叶子节点
@@ -339,10 +448,11 @@ private:
  *
  *
  */
-template <typename T> class InnerBNode : public BNode<T> {
+template <typename T>
+class InnerBNode : public BNode<T> {
   typedef typename vector<T>::size_type size_type;
 
-public:
+ public:
   InnerBNode() : BNode<T>(false) {}
   InnerBNode(const InnerBNode<T> &innerbnode)
       : BNode<T>(innerbnode), p(innerbnode.p) {}
@@ -353,13 +463,48 @@ public:
       : BNode<T>(innerbnode, MAX_SIZE / 2 + 1),
         p(make_move_iterator(innerbnode->p.begin() + MAX_SIZE / 2 + 1),
           make_move_iterator(innerbnode->p.end())) {}
-  //顶层分裂调用
+  /*顶层分裂调用*/
   InnerBNode(BNode<T> *const &root, const size_type &MAX_SIZE)
       : BNode<T>(false) {
     pair<BNode<T> *, T> info = split(root, MAX_SIZE);
     this->addKey(info.second);
     p.push_back(root);
     p.push_back(info.first);
+  }
+  /* 序列化构造函数*/
+  InnerBNode(const bplustree::BNode &pb_bnode, string dir)
+      : BNode<T>(pb_bnode) {
+    typename vector<BNode<T> *>::size_type child_size = pb_bnode._child_size();
+    for (typename vector<BNode<T> *>::size_type i = 0; i < child_size; ++i) {
+      ifstream fr;
+      fr.open(dir + pb_bnode._child(i));
+      if (fr) {
+        string str;
+        fr >> str;
+        bplustree::BNode pb_child;
+        pb_child.ParseFromString(str);
+        if (pb_child._isleaf()) {
+          LeafBNode<T> *child = new LeafBNode<T>(pb_child);
+          p.push_back(child);
+
+          //设置head
+          if (!deserialize_head<T>) {
+            deserialize_head<T> = child;
+          }
+          //设置prev
+          if (deserialize_prev<T>) {
+            deserialize_prev<T>->setNext(child);
+          }
+          child->setPrev(deserialize_prev<T>);
+          deserialize_prev<T> = child;
+        } else {
+          p.push_back(new InnerBNode<T>(pb_child, dir));
+        }
+        fr.close();
+      } else {
+        cerr << "open error:" << pb_bnode._child(i) << endl;
+      }
+    }
   }
 
   /* 分裂某孩子节点 */
@@ -412,7 +557,7 @@ public:
   /* 搜索目标key值 */
   pair<T, uint64_t *> searchKey(const T &k) const override {
     size_type index = this->getInsertIndex(k);
-    if (index < this->getKeyNum() && k == this->_key[index]) {
+    if (index < this->_keyNum && k == this->_key[index]) {
       return p[index + 1]->searchKey(k);
     } else {
       return p[index]->searchKey(k);
@@ -438,7 +583,7 @@ public:
   T deleteKey(const T &k, const size_type &MAX_SIZE) override {
     size_type deleteIndex = this->getInsertIndex(k);
     T newKey;
-    if (deleteIndex < this->getKeyNum() && k == this->_key[deleteIndex]) {
+    if (deleteIndex < this->_keyNum && k == this->_key[deleteIndex]) {
       ++deleteIndex;
       //遇见关键字向右找
       newKey = p[deleteIndex]->deleteKey(k, MAX_SIZE);
@@ -486,7 +631,7 @@ public:
   void searchKeyForRange(const T &l, const T &r, vector<pair<T, uint64_t>> &seq,
                          const bool &continueFlag = false) const override {
     size_type index = this->getInsertIndex(l);
-    if (index < this->getKeyNum() && l == this->getKey(index)) {
+    if (index < this->_keyNum && l == this->_key[index]) {
       p[index + 1]->searchKeyForRange(l, r, seq);
     } else {
       p[index]->searchKeyForRange(l, r, seq);
@@ -496,7 +641,7 @@ public:
   /* 输出所有关键字 */
   void outputAllKeys(vector<T> &seq) const override {
     cout << " [";
-    for (size_type i = 0; i < this->getKeyNum(); ++i) {
+    for (size_type i = 0; i < this->_keyNum; ++i) {
       if (i) {
         cout << " ";
       }
@@ -542,12 +687,12 @@ public:
     T key;
     BNode<T> *child;
     if (isRight) {
-      key = this->getKey(0);
+      key = this->_key[0];
       this->_key.erase(this->_key.begin());
       child = p[0];
       p.erase(p.begin());
     } else {
-      key = this->getKey(this->getKeyNum() - 1);
+      key = this->_key[this->_keyNum - 1];
       this->_key.erase(this->_key.end() - 1);
       child = p[p.size() - 1];
       p.erase(p.end() - 1);
@@ -572,16 +717,98 @@ public:
     p.insert(p.end(), ps.begin(), ps.end());
   }
 
-private:
+  /* 序列化 */
+  void Serialize(string dir) override {
+    bplustree::BNode pb_bnode;
+    pb_bnode.set__isleaf(this->_isLeaf);
+    pb_bnode.set__keynum(this->_keyNum);
+    uuid_t uuid;
+    char str[36];
+    for (size_t i = 0; i < this->_keyNum; ++i) {
+      pb_bnode.add__key(this->_key[i]);
+      p[i]->getUUID(uuid);
+      uuid_unparse(uuid, str);
+      string child(begin(str), end(str));
+      pb_bnode.add__child(child);
+    }
+    p[this->_keyNum]->getUUID(uuid);
+    uuid_unparse(uuid, str);
+    string child(begin(str), end(str));
+    pb_bnode.add__child(child);
+    // uuid
+    uuid_unparse(this->_uuid, str);
+    string name(begin(str), end(str));
+    pb_bnode.set__uuid(name);
+
+    ofstream fw;
+    fw.open(dir + name, ios::out | ios::binary);
+    if (fw) {
+      string serialize_data;
+      pb_bnode.SerializeToString(&serialize_data);
+      fw << serialize_data;
+      fw.close();
+    } else {
+      cerr << "序列化时" + dir + name << "打开失败" << endl;
+    }
+  }
+
+ private:
   vector<BNode<T> *> p;
 };
 
-template <typename T> class BPlusTree {
+template <typename T>
+class BPlusTree {
   typedef typename vector<T>::size_type size_type;
 
-public:
-  BPlusTree(const size_type &max_size) : _MAX_SIZE(max_size) {
+ public:
+  BPlusTree() : _MAX_SIZE(3), _name("testTree") { B_Plus_Tree_Create(); }
+  BPlusTree(const size_type &max_size, string name)
+      : _MAX_SIZE(max_size), _name(name) {
     B_Plus_Tree_Create();
+  }
+  BPlusTree(const bplustree::BPlusTree &pb_bplustree)
+      : _MAX_SIZE(pb_bplustree._max_size()), _name(pb_bplustree._name()) {
+    if (pb_bplustree.has__root()) {
+      string root = pb_bplustree._root();
+      ifstream fr;
+      string dir = "./" + _name + "/";
+      fr.open(dir + root, ios::in | ios::binary);
+      if (fr) {
+        string str;
+        fr >> str;
+        bplustree::BNode pb_bnode;
+        pb_bnode.ParseFromString(str);
+        if (pb_bnode._isleaf()) {
+          _root = new LeafBNode<T>(pb_bnode);
+          setHead();
+        } else {
+          deserialize_head<T> = nullptr;
+          deserialize_prev<T> = nullptr;
+          _root = new InnerBNode<T>(pb_bnode, dir);
+          _Head = deserialize_head<T>;
+        }
+        fr.close();
+      } else {
+        cerr << "open error:" << root << endl;
+      }
+    }
+
+    // if (pb_bplustree.has__head() &&
+    //     pb_bplustree._head() != pb_bplustree._root()) {
+    //   string head = pb_bplustree._head();
+    //   ifstream fr;
+    //   fr.open("./bin/" + head, ios::in | ios::binary);
+    //   if (fr) {
+    //     string str;
+    //     fr >> str;
+    //     bplustree::BNode pb_bnode;
+    //     pb_bnode.ParseFromString(str);
+    //     _Head = new LeafBNode<T>(pb_bnode, nullptr);
+    //     fr.close();
+    //   } else {
+    //     cerr << "open error:" << head << endl;
+    //   }
+    // }
   }
   ~BPlusTree() { B_Plus_Tree_Clear(); }
 
@@ -700,12 +927,68 @@ public:
     cout << endl;
     return allKeySeq;
   }
+  /* 重置树 */
   void B_Plus_Tree_Reset() {
     B_Plus_Tree_Clear();
     B_Plus_Tree_Create();
   }
+  /* 序列化 */
+  void Serialize() {
+    bplustree::BPlusTree pb_bplustree;
+    pb_bplustree.set__max_size(_MAX_SIZE);
+    pb_bplustree.set__name(_name);
+    uuid_t uuid;
+    char str[36];
+    // root
+    _root->getUUID(uuid);
+    uuid_unparse(uuid, str);
+    string root(begin(str), end(str));
+    pb_bplustree.set__root(root);
+    // head
+    _Head->getUUID(uuid);
+    uuid_unparse(uuid, str);
+    string head(begin(str), end(str));
+    pb_bplustree.set__head(head);
 
-private:
+    string path = "./" + _name;
+    string cmd = "rm -rf ";
+    system((cmd + path).c_str());
+    cmd = "mkdir ";
+    system((cmd + path).c_str());
+    path += "/" + _name;
+    ofstream fw;
+    fw.open(path, ios::out | ios::binary);
+    if (fw) {
+      string serialize_data;
+      pb_bplustree.SerializeToString(&serialize_data);
+      fw << serialize_data;
+      fw.close();
+    } else {
+      cerr << "序列化时./" + path << "打开失败" << endl;
+    }
+  }
+  void serializeAll() {
+    Serialize();
+    typedef typename vector<T>::size_type size_type;
+    queue<BNode<T> *> q;
+    q.push(_root);
+    while (!q.empty()) {
+      BNode<T> *temp = q.front();
+      q.pop();
+      if (!temp->isLeaf()) {
+        InnerBNode<T> *tempInner = static_cast<InnerBNode<T> *>(temp);
+        for (size_type i = 0; i < tempInner->getChildNum(); ++i) {
+          q.push(tempInner->getChild(i));
+        }
+      }
+      temp->Serialize("./" + _name + "/");
+    }
+  }
+  size_type getMAX_SIZE() { return _MAX_SIZE; }
+  string getName() { return _name; }
+  void setName(string name) { _name = name; }
+
+ private:
   /**
    * @brief 创建一个空的B树
    * @return 指向该节点的指针
@@ -728,7 +1011,6 @@ private:
     typedef typename vector<T>::size_type size_type;
     queue<BNode<T> *> q;
     q.push(_root);
-    BNode<T> *lastLayer = _root;
     while (!q.empty()) {
       BNode<T> *temp = q.front();
       q.pop();
@@ -737,20 +1019,19 @@ private:
         for (size_type i = 0; i < tempInner->getChildNum(); ++i) {
           q.push(tempInner->getChild(i));
         }
-        if (temp == lastLayer) {
-          lastLayer = tempInner->getChild(tempInner->getChildNum() - 1);
-        }
       }
       delete temp;
     }
-    _root = NULL;
+    _root = nullptr;
+    _Head = nullptr;
 #ifndef NDEBUG
     cout << "----------------B+树已清空----------------" << endl;
 #endif
   }
   BNode<T> *_root = nullptr;
   const size_type _MAX_SIZE;
-  LeafBNode<T> *_Head;
+  LeafBNode<T> *_Head = nullptr;
+  string _name;
 };
 
 #endif

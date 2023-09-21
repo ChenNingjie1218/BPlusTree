@@ -8,6 +8,7 @@
 #include <string>
 
 #include "B_Plus_Tree.h"
+#include "bplustree.pb.h"
 /**
  * @brief 初始化指令列表
  */
@@ -109,9 +110,6 @@ void interface() {
       }
       tree->OutPutAllTheKeys();
     } else if (option == string("clear")) {
-      if (tree) {
-        cout << "已经创建了一个树" << endl;
-      }
       delete tree;
       tree = nullptr;
     } else if (option == string("help")) {
@@ -122,13 +120,42 @@ void interface() {
       if (tree) {
         cout << "已经创建了一个树" << endl;
       }
-      int maxDegree;
-      maxDegree = 3;  //默认3
-      line >> maxDegree;
+      int maxDegree = 3;        //默认3
+      string name("testTree");  //默认为test
+      line >> maxDegree >> name;
       // maxDegree = 4;
-      tree = new BPlusTree<T>(maxDegree);
+      tree = new BPlusTree<T>(maxDegree, name);
     } else if (option == string("reset")) {
       tree->B_Plus_Tree_Reset();
+    } else if (option == string("serialize")) {
+      if (!tree) {
+        cout << "您还没有建树" << endl;
+      }
+      tree->serializeAll();
+    } else if (option == string("deserialize")) {
+      string tree_name;
+      line >> tree_name;
+      ifstream fr;
+      fr.open("./" + tree_name + "/" + tree_name);
+      if (fr) {
+        string str;
+        fr >> str;
+        bplustree::BPlusTree pb_bplustree;
+        pb_bplustree.ParseFromString(str);
+        if (tree) {
+          cout << "您当前的树还没有保存，请问是否舍弃？" << endl;
+          string discard;
+          getline(cin, discard);
+          if (discard != "yes") {
+            continue;
+          }
+          delete tree;
+        }
+        tree = new BPlusTree<T>(pb_bplustree);
+        fr.close();
+      } else {
+        cerr << "open error:./" + tree_name + "/" + tree_name << endl;
+      }
     } else {
       cout << "还没有这个指令" << endl;
     }

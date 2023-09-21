@@ -59,11 +59,11 @@ MySQL
 ├── build
 │
 ├── doc
-│   └── res
+│&emsp;&emsp;└── res
 ├── include
 ├── src
 └── test
-    └── include
+&emsp;&emsp;&emsp;└── include
 
 ### 3.2 安装&测试
 说明如何编译、安装、运行测试。
@@ -448,7 +448,7 @@ void interface();
 最初方案：遍历完该节点，遍历右兄弟的时候，走的同样的逻辑，导致又二分查找了一次
 优化方案1：横向遍历的时候不再二分查找，传入默认参数`continueFlag`
 
-- OPP优化
+- OOP优化
 最初方案：建树、插入、查找、范围查找、BFS等大操作都是面向过程，且`MAX_SIZE`没有封装
 优化方案1：将上述操作放入一个类中实现面向对象
 

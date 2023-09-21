@@ -1,13 +1,24 @@
 {
     "C_Cpp.intelliSenseEngine": "disabled",
-    "cmake.configureOnOpen": true,
+    "cmake.configureOnOpen": false,
     "files.associations": {
         "vector": "cpp",
         "utility": "cpp",
         "iterator": "cpp"
     },
     "[cpp]": {
-        "editor.defaultFormatter": "xaver.clang-format"
+        "editor.defaultFormatter": "xaver.clang-format",
     },
     "editor.formatOnSave": true,
+    "clangd.arguments": [
+        "--clang-tidy", // 开启clang-tidy
+        "--all-scopes-completion", // 全代码库补全
+        "--completion-style=detailed", // 详细补全
+        "--header-insertion=iwyu",
+        "--pch-storage=disk", // 如果内存够大可以关闭这个选项
+        "--log=error",
+        "--j=5", // 后台线程数，可根据机器配置自行调整
+        "--background-index"
+    ],
+    // "clangd.path": "<安装的clangd地址>",
 }
