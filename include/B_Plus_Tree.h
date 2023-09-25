@@ -11,8 +11,8 @@
 #include <iterator>
 #include <memory>
 #include <queue>
+#include <shared_mutex>
 #include <string>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -477,12 +477,10 @@ class InnerBNode : public BNode<T> {
     typename vector<BNode<T> *>::size_type child_size = pb_bnode._child_size();
     for (typename vector<BNode<T> *>::size_type i = 0; i < child_size; ++i) {
       ifstream fr;
-      fr.open(dir + pb_bnode._child(i));
+      fr.open(dir + pb_bnode._child(i), ios::in | ios::binary);
       if (fr) {
-        string str;
-        fr >> str;
         bplustree::BNode pb_child;
-        pb_child.ParseFromString(str);
+        pb_child.ParseFromIstream(&fr);
         if (pb_child._isleaf()) {
           LeafBNode<T> *child = new LeafBNode<T>(pb_child);
           p.push_back(child);
@@ -774,10 +772,8 @@ class BPlusTree {
       string dir = "./" + _name + "/";
       fr.open(dir + root, ios::in | ios::binary);
       if (fr) {
-        string str;
-        fr >> str;
         bplustree::BNode pb_bnode;
-        pb_bnode.ParseFromString(str);
+        pb_bnode.ParseFromIstream(&fr);
         if (pb_bnode._isleaf()) {
           _root = new LeafBNode<T>(pb_bnode);
           setHead();

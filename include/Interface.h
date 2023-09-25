@@ -136,12 +136,10 @@ void interface() {
       string tree_name;
       line >> tree_name;
       ifstream fr;
-      fr.open("./" + tree_name + "/" + tree_name);
+      fr.open("./" + tree_name + "/" + tree_name, ios::in | ios::binary);
       if (fr) {
-        string str;
-        fr >> str;
         bplustree::BPlusTree pb_bplustree;
-        pb_bplustree.ParseFromString(str);
+        pb_bplustree.ParseFromIstream(&fr);
         if (tree) {
           cout << "您当前的树还没有保存，请问是否舍弃？" << endl;
           string discard;
@@ -155,6 +153,14 @@ void interface() {
         fr.close();
       } else {
         cerr << "open error:./" + tree_name + "/" + tree_name << endl;
+      }
+    } else if (option == string("test")) {
+      if (!tree) {
+        tree = new BPlusTree<int>(10, "testTree");
+      }
+      for (int i = 0; i < 100; i++) {
+        pair<int, uint64_t> data = make_pair(i, i);
+        tree->B_Plus_Tree_Insert(data);
       }
     } else {
       cout << "还没有这个指令" << endl;
