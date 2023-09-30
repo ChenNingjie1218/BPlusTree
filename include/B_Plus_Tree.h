@@ -10,6 +10,7 @@
 #include <iostream>
 #include <iterator>
 #include <memory>
+#include <mutex>
 #include <queue>
 #include <shared_mutex>
 #include <string>
@@ -20,6 +21,7 @@
 using namespace std;
 
 #define NDEBUG
+
 // ---------------------------B+树的类-------------------------
 /**
  * @brief B+树节点基类
@@ -43,7 +45,7 @@ class BNode {
     strncpy(str, pb_bnode._uuid().c_str(), 36);
     uuid_parse(str, _uuid);
   }
-  virtual ~BNode() {}
+  virtual ~BNode() { _mutex.unlock(); }
 
   /**
    * @brief 分裂用的特殊构造函数
@@ -51,8 +53,7 @@ class BNode {
    * */
   BNode(BNode<T> *bnode, const size_type &SIZE)
       : _isLeaf(bnode->isLeaf()),
-        _key(make_move_iterator(bnode->_key.begin() + SIZE),
-             make_move_iterator(bnode->_key.end())) {
+        _key(bnode->_key.begin() + SIZE, bnode->_key.end()) {
     updateKeyNum();
   }
 
@@ -62,22 +63,29 @@ class BNode {
   /* 更新关键字数量 */
   void updateKeyNum() { _keyNum = _key.size(); }
 
-  /* 是否是安全节点 */
-  // bool isSafe(){
-  //     if(_keyNum > MAX_SIZE / 2 - 1 && _keyNum < MAX_SIZE - 1){
-  //         return true;
-  //     }
-  //     return false;
-  // }
+  /**
+  * @brief 是否是安全节点
+  * @param type false-----删除
+                true -----插入
+  */
+  bool isSafe(const size_type &MAX_SIZE, bool type) {
+    if (type && _keyNum < MAX_SIZE - 1) {
+      return true;
+    } else if (!type && _keyNum > ceil(1.0 * MAX_SIZE / 2) - 1) {
+      return true;
+    }
+    return false;
+  }
 
   /* 是否是叶子节点 */
   const bool isLeaf() const { return _isLeaf; }
 
   /* 插入关键字 */
-  virtual void insertKey(const pair<T, uint64_t> &kv,
-                         const size_type &MAX_SIZE) = 0;
+  virtual void insertKey(const pair<T, uint64_t> &kv, const size_type &MAX_SIZE,
+                         deque<shared_mutex *> &q_w_lock) = 0;
   /* 删除关键字 */
-  virtual T deleteKey(const T &k, const size_type &MAX_SIZE) = 0;
+  virtual T deleteKey(const T &k, const size_type &MAX_SIZE,
+                      deque<shared_mutex *> &q_w_lock, bool &hasNewKey) = 0;
 
   /* 在该节点中添加关键字 */
   size_type addKey(const T &k) {
@@ -139,13 +147,14 @@ class BNode {
   }
 
   /* 查找关键字 */
-  virtual pair<T, uint64_t *> searchKey(const T &k) const = 0;
+  virtual pair<T, uint64_t *> searchKey(
+      const T &k, shared_lock<shared_mutex> &last_lock) = 0;
   /* 范围查询关键字 */
   virtual void searchKeyForRange(const T &l, const T &r,
                                  vector<pair<T, uint64_t>> &seq,
-                                 const bool &continueFlag = false) const = 0;
+                                 const bool &continueFlag = false) = 0;
   /* 输出所有关键字 */
-  virtual void outputAllKeys(vector<T> &seq) const = 0;
+  virtual void outputAllKeys(vector<T> &seq) = 0;
   /* 关键字分裂 */
   virtual void keySplit(const bool &isLeft, const size_type &MAX_SIZE) = 0;
   /* 获取关键字 */
@@ -166,12 +175,15 @@ class BNode {
   }
   /* 设置uuid */
   void setUUID(uuid_t &uuid) { uuid_copy(_uuid, uuid); }
+  /* 获取锁 */
+  shared_mutex &getMutex() { return _mutex; }
 
  protected:
   size_type _keyNum;
   const bool _isLeaf;
   vector<T> _key;
   uuid_t _uuid = "";
+  shared_mutex _mutex;
 };
 
 /**
@@ -197,8 +209,8 @@ class LeafBNode : public BNode<T> {
       : BNode<T>(leafbnode, MAX_SIZE / 2),
         _next(leafbnode->_next),
         _prev(leafbnode),
-        _value(make_move_iterator(leafbnode->_value.begin() + MAX_SIZE / 2),
-               make_move_iterator(leafbnode->_value.end())) {}
+        _value(leafbnode->_value.begin() + MAX_SIZE / 2,
+               leafbnode->_value.end()) {}
   /*序列化的构造函数*/
   LeafBNode(const bplustree::BNode &pb_bnode)
       : BNode<T>(pb_bnode), _next(nullptr), _prev(nullptr) {
@@ -250,7 +262,8 @@ class LeafBNode : public BNode<T> {
   }
 
   /* 搜索关键字 */
-  pair<T, uint64_t *> searchKey(const T &k) const override {
+  pair<T, uint64_t *> searchKey(const T &k,
+                                shared_lock<shared_mutex> &last_lock) override {
     size_type keyindex = this->getKeyIndex(k);
     if (this->_keyNum != keyindex) {
       return make_pair(k, _value[keyindex]);
@@ -259,15 +272,29 @@ class LeafBNode : public BNode<T> {
   }
 
   /* 插入关键字 */
-  void insertKey(const pair<T, uint64_t> &kv,
-                 const size_type &MAX_SIZE) override {
+  void insertKey(const pair<T, uint64_t> &kv, const size_type &MAX_SIZE,
+                 deque<shared_mutex *> &q_w_lock) override {
+    //当前节点是安全的，解锁之前的所有节点
+    if (this->isSafe(MAX_SIZE, true)) {
+      while (q_w_lock.size() != 1) {
+        q_w_lock.front()->unlock();
+        q_w_lock.pop_front();
+      }
+    }
     size_type insertIndex = this->addKey(kv.first);
     uint64_t *p_v = new uint64_t(kv.second);
     _value.insert(_value.begin() + insertIndex, p_v);
   }
 
   /* 删除关键字 */
-  T deleteKey(const T &k, const size_type &MAX_SIZE) override {
+  T deleteKey(const T &k, const size_type &MAX_SIZE,
+              deque<shared_mutex *> &q_w_lock, bool &hasNewKey) override {
+    if (!hasNewKey && this->isSafe(MAX_SIZE, false)) {
+      while (q_w_lock.size() != 1) {
+        q_w_lock.front()->unlock();
+        q_w_lock.pop_front();
+      }
+    }
     size_type removeIndex = this->removeKey(k);
     if (removeIndex != _value.size()) {
 #ifndef NDEBUG
@@ -277,17 +304,20 @@ class LeafBNode : public BNode<T> {
       delete _value[removeIndex];
       _value.erase(_value.begin() + removeIndex);
       //返回更新的关键字
-      if (removeIndex < this->_keyNum) {
-        return this->_key[removeIndex];
-      } else if (_next) {
-        return _next->getKey(0);
+      if (hasNewKey) {
+        if (removeIndex < this->_keyNum) {
+          return this->_key[removeIndex];
+        } else if (_next) {
+          shared_lock<shared_mutex> r_lock(_next->getMutex());
+          return _next->getKey(0);
+        }
       }
     }
     return k;
   }
 
   /* 输出所有关键字 */
-  void outputAllKeys(vector<T> &seq) const override {
+  void outputAllKeys(vector<T> &seq) override {
     cout << " [";
     for (size_type i = 0; i < this->_keyNum; ++i) {
       seq.push_back(this->_key[i]);
@@ -298,7 +328,7 @@ class LeafBNode : public BNode<T> {
 
   /* 范围查询关键字 */
   void searchKeyForRange(const T &l, const T &r, vector<pair<T, uint64_t>> &seq,
-                         const bool &continueFlag = false) const override {
+                         const bool &continueFlag = false) override {
     size_type index = 0;
     if (!continueFlag) {
       index = this->getInsertIndex(l);
@@ -309,7 +339,9 @@ class LeafBNode : public BNode<T> {
       cout << " <" << this->_key[index] << ", " << *_value[index] << ">";
       ++index;
     }
+    this->_mutex.unlock_shared();
     if (_next && index == this->_keyNum) {
+      _next->getMutex().lock_shared();
       _next->searchKeyForRange(l, r, seq, true);
     }
   }
@@ -461,8 +493,7 @@ class InnerBNode : public BNode<T> {
   /* 内部节点分裂用的特殊构造函数 */
   InnerBNode(InnerBNode<T> *&innerbnode, const size_type &MAX_SIZE)
       : BNode<T>(innerbnode, MAX_SIZE / 2 + 1),
-        p(make_move_iterator(innerbnode->p.begin() + MAX_SIZE / 2 + 1),
-          make_move_iterator(innerbnode->p.end())) {}
+        p(innerbnode->p.begin() + MAX_SIZE / 2 + 1, innerbnode->p.end()) {}
   /*顶层分裂调用*/
   InnerBNode(BNode<T> *const &root, const size_type &MAX_SIZE)
       : BNode<T>(false) {
@@ -540,7 +571,9 @@ class InnerBNode : public BNode<T> {
       leafRight->clearValues();
       leafLeft->setNext(leafRight->getNext());
       if (leafRight->getNext()) {
+        leafRight->getNext()->getMutex().lock();
         leafRight->getNext()->setPrev(leafLeft);
+        leafRight->getNext()->getMutex().unlock();
       }
     } else {
       //非叶子节点的合并
@@ -553,57 +586,113 @@ class InnerBNode : public BNode<T> {
   }
 
   /* 搜索目标key值 */
-  pair<T, uint64_t *> searchKey(const T &k) const override {
+  pair<T, uint64_t *> searchKey(const T &k,
+                                shared_lock<shared_mutex> &last_lock) override {
     size_type index = this->getInsertIndex(k);
     if (index < this->_keyNum && k == this->_key[index]) {
-      return p[index + 1]->searchKey(k);
+      shared_lock<shared_mutex> r_lock(p[index + 1]->getMutex());
+      last_lock.unlock();
+      return p[index + 1]->searchKey(k, r_lock);
     } else {
-      return p[index]->searchKey(k);
+      shared_lock<shared_mutex> r_lock(p[index]->getMutex());
+      last_lock.unlock();
+      return p[index]->searchKey(k, r_lock);
     }
   }
 
   /* 插入关键字 */
-  void insertKey(const pair<T, uint64_t> &kv,
-                 const size_type &MAX_SIZE) override {
+  void insertKey(const pair<T, uint64_t> &kv, const size_type &MAX_SIZE,
+                 deque<shared_mutex *> &q_w_lock) override {
+    if (this->isSafe(MAX_SIZE, true)) {
+      while (q_w_lock.size() != 1) {
+        q_w_lock.front()->unlock();
+        q_w_lock.pop_front();
+      }
+    }
     size_type insertIndex = this->getInsertIndex(kv.first);
+    BNode<T> *insertNode = p[insertIndex];
+    insertNode->getMutex().lock();
+    q_w_lock.push_back(&insertNode->getMutex());
     //默认不插入相等的key，都是左插
-    p[insertIndex]->insertKey(kv, MAX_SIZE);
+    insertNode->insertKey(kv, MAX_SIZE, q_w_lock);
 
     //孩子插入后需要分裂
-    if (p[insertIndex]->getKeyNum() == MAX_SIZE) {
-      pair<BNode<T> *, T> info = split(p[insertIndex], MAX_SIZE);
+    if (q_w_lock.size() > 1 && insertNode->getKeyNum() == MAX_SIZE) {
+      pair<BNode<T> *, T> info = split(insertNode, MAX_SIZE);
       insertIndex = this->addKey(info.second);
       p.insert(p.begin() + insertIndex + 1, info.first);
+    }
+
+    if (!q_w_lock.empty()) {
+      q_w_lock.back()->unlock();
+      q_w_lock.pop_back();
     }
   }
 
   /* 删除关键字 */
-  T deleteKey(const T &k, const size_type &MAX_SIZE) override {
+  T deleteKey(const T &k, const size_type &MAX_SIZE,
+              deque<shared_mutex *> &q_w_lock, bool &hasNewKey) override {
+    if (!hasNewKey && this->isSafe(MAX_SIZE, false)) {
+      while (q_w_lock.size() != 1) {
+        q_w_lock.front()->unlock();
+        q_w_lock.pop_front();
+      }
+    }
+
     size_type deleteIndex = this->getInsertIndex(k);
     T newKey;
+    BNode<int> *deleteChild = p[deleteIndex];
     if (deleteIndex < this->_keyNum && k == this->_key[deleteIndex]) {
       ++deleteIndex;
       //遇见关键字向右找
-      newKey = p[deleteIndex]->deleteKey(k, MAX_SIZE);
+      deleteChild = p[deleteIndex];
+      deleteChild->getMutex().lock();
+      q_w_lock.push_back(&deleteChild->getMutex());
+      hasNewKey = true;
+      newKey = deleteChild->deleteKey(k, MAX_SIZE, q_w_lock, hasNewKey);
       this->_key[deleteIndex - 1] = newKey;
     } else {
-      newKey = p[deleteIndex]->deleteKey(k, MAX_SIZE);
+      deleteChild->getMutex().lock();
+      q_w_lock.push_back(&deleteChild->getMutex());
+      newKey = deleteChild->deleteKey(k, MAX_SIZE, q_w_lock, hasNewKey);
     }
     //孩子删除后需要借
-    if (p[deleteIndex]->getKeyNum() < ceil(1.0 * MAX_SIZE / 2) - 1) {
+    if (q_w_lock.size() > 1 &&
+        deleteChild->getKeyNum() < ceil(1.0 * MAX_SIZE / 2) - 1) {
+      q_w_lock.pop_back();
+      if (deleteIndex + 1 < p.size()) {
+        p[deleteIndex + 1]->getMutex().lock();
+      }
+      if (deleteIndex) {
+        p[deleteIndex - 1]->getMutex().lock();
+      }
       if (deleteIndex + 1 < p.size() &&
           p[deleteIndex + 1]->getKeyNum() > ceil(1.0 * MAX_SIZE / 2) - 1) {
+        if (deleteIndex) {
+          p[deleteIndex - 1]->getMutex().unlock();
+        }
         //找右边兄弟借
-        this->_key[deleteIndex] = p[deleteIndex]->borrowKey(
+        this->_key[deleteIndex] = deleteChild->borrowKey(
             p[deleteIndex + 1], true, this->_key[deleteIndex]);
+        p[deleteIndex + 1]->getMutex().unlock();
+        deleteChild->getMutex().unlock();
       } else if (deleteIndex && p[deleteIndex - 1]->getKeyNum() >
                                     ceil(1.0 * MAX_SIZE / 2) - 1) {
         //找左边兄弟借
-        this->_key[deleteIndex - 1] = p[deleteIndex]->borrowKey(
+        if (deleteIndex + 1 < p.size()) {
+          p[deleteIndex + 1]->getMutex().unlock();
+        }
+        this->_key[deleteIndex - 1] = deleteChild->borrowKey(
             p[deleteIndex - 1], false, this->_key[deleteIndex - 1]);
+        p[deleteIndex - 1]->getMutex().unlock();
+        deleteChild->getMutex().unlock();
       } else if (deleteIndex + 1 < p.size()) {
+        if (deleteIndex) {
+          p[deleteIndex - 1]->getMutex().unlock();
+        }
         //跟右兄弟合并
-        merge(p[deleteIndex], p[deleteIndex + 1], this->getKey(deleteIndex));
+        merge(deleteChild, p[deleteIndex + 1], this->getKey(deleteIndex));
+        deleteChild->getMutex().unlock();
         this->_key.erase(this->_key.begin() + deleteIndex);
         this->updateKeyNum();
         p.erase(p.begin() + deleteIndex + 1);
@@ -611,9 +700,12 @@ class InnerBNode : public BNode<T> {
         cout << "-------------------跟右兄弟合并----------------------" << endl;
 #endif
       } else {
+        if (deleteIndex + 1 < p.size()) {
+          p[deleteIndex + 1]->getMutex().unlock();
+        }
         //跟左兄弟合并
-        merge(p[deleteIndex - 1], p[deleteIndex],
-              this->getKey(deleteIndex - 1));
+        merge(p[deleteIndex - 1], deleteChild, this->getKey(deleteIndex - 1));
+        p[deleteIndex - 1]->getMutex().unlock();
         this->_key.erase(this->_key.begin() + deleteIndex - 1);
         this->updateKeyNum();
         p.erase(p.begin() + deleteIndex);
@@ -621,23 +713,31 @@ class InnerBNode : public BNode<T> {
         cout << "-------------------跟左兄弟合并----------------------" << endl;
 #endif
       }
+    } else if (!q_w_lock.empty()) {
+      q_w_lock.back()->unlock();
+      q_w_lock.pop_back();
     }
     return newKey;
   }
 
   /* 范围查询关键字 */
   void searchKeyForRange(const T &l, const T &r, vector<pair<T, uint64_t>> &seq,
-                         const bool &continueFlag = false) const override {
+                         const bool &continueFlag = false) override {
     size_type index = this->getInsertIndex(l);
     if (index < this->_keyNum && l == this->_key[index]) {
+      p[index + 1]->getMutex().lock_shared();
+      this->_mutex.unlock_shared();
       p[index + 1]->searchKeyForRange(l, r, seq);
     } else {
+      p[index]->getMutex().lock_shared();
+      this->_mutex.unlock_shared();
       p[index]->searchKeyForRange(l, r, seq);
     }
   }
 
   /* 输出所有关键字 */
-  void outputAllKeys(vector<T> &seq) const override {
+  void outputAllKeys(vector<T> &seq) override {
+    shared_lock<shared_mutex> r_lock(this->_mutex);
     cout << " [";
     for (size_type i = 0; i < this->_keyNum; ++i) {
       if (i) {
@@ -703,7 +803,7 @@ class InnerBNode : public BNode<T> {
     return make_pair(key, child);
   }
   /* 获取指针的数组 */
-  vector<BNode<T> *> getAllPs() const { return p; }
+  vector<BNode<T> *> getAllPs() { return p; }
   /* 合并关键字 */
   void mergeKeys(vector<T> &&keys, const T &&key) noexcept {
     this->_key.push_back(key);
@@ -815,7 +915,8 @@ class BPlusTree {
    */
   pair<T, uint64_t *> B_Plus_Tree_Search(const T &k) const {
     if (_root->getKeyNum()) {
-      return _root->searchKey(k);
+      shared_lock<shared_mutex> r_lock(_root->getMutex());
+      return _root->searchKey(k, r_lock);
     }
     return make_pair(k, nullptr);
   }
@@ -829,13 +930,22 @@ class BPlusTree {
     cout << "---------------向B+树中插入<" << data.first << ", " << data.second
          << ">--------------" << endl;
 #endif
-
-    _root->insertKey(data, _MAX_SIZE);
-    if (_root->getKeyNum() == _MAX_SIZE) {
+    deque<shared_mutex *> q_w_lock;
+    _mutex.lock();
+    q_w_lock.push_back(&_mutex);
+    BNode<T> *insertRoot = _root;
+    insertRoot->getMutex().lock();
+    q_w_lock.push_back(&insertRoot->getMutex());
+    insertRoot->insertKey(data, _MAX_SIZE, q_w_lock);
+    if (q_w_lock.size() > 1 && insertRoot->getKeyNum() == _MAX_SIZE) {
 #ifndef NDEBUG
       cout << "-------------------顶层节点满了---------------" << endl;
 #endif
       _root = new InnerBNode<T>(_root, _MAX_SIZE);
+    }
+    while (!q_w_lock.empty()) {
+      q_w_lock.back()->unlock();
+      q_w_lock.pop_back();
     }
   }
 
@@ -844,21 +954,39 @@ class BPlusTree {
    * @param k 待删除的关键字
    */
   void B_Plus_Tree_Delete(const T &k) {
-    if (!_root->getKeyNum()) {
+    deque<shared_mutex *> q_w_lock;
+    _mutex.lock();
+    q_w_lock.push_back(&_mutex);
+    BNode<T> *deleteRoot = _root;
+    deleteRoot->getMutex().lock();
+    q_w_lock.push_back(&deleteRoot->getMutex());
+    if (!deleteRoot->getKeyNum()) {
       cout << "无法删除" << endl;
+      while (!q_w_lock.empty()) {
+        q_w_lock.back()->unlock();
+        q_w_lock.pop_back();
+      }
       return;
     }
 #ifndef NDEBUG
     cout << "------------------开始删除<" << k << ">------------------" << endl;
 #endif
-    _root->deleteKey(k, _MAX_SIZE);
+
+    bool hasNewKey = false;
+    deleteRoot->deleteKey(k, _MAX_SIZE, q_w_lock, hasNewKey);
     //顶层没节点了
-    if (_root->getKeyNum() == 0 && !_root->isLeaf()) {
-      InnerBNode<T> *oldRoot = dynamic_cast<InnerBNode<T> *>(_root);
+    if (q_w_lock.size() > 1 && deleteRoot->getKeyNum() == 0 &&
+        !deleteRoot->isLeaf()) {
+      InnerBNode<T> *oldRoot = dynamic_cast<InnerBNode<T> *>(deleteRoot);
+      q_w_lock.pop_back();
       if (oldRoot) {
         _root = oldRoot->getChild(0);
         delete oldRoot;
       }
+    }
+    while (!q_w_lock.empty()) {
+      q_w_lock.back()->unlock();
+      q_w_lock.pop_back();
     }
   }
 
@@ -870,6 +998,7 @@ class BPlusTree {
   vector<pair<T, uint64_t>> B_Plus_Tree_Search_For_Range(const T &l,
                                                          const T &r) const {
     vector<pair<T, uint64_t>> rangeSearchResult;
+    _root->getMutex().lock_shared();
     _root->searchKeyForRange(l, r, rangeSearchResult);
     if (rangeSearchResult.empty()) {
       cout << "没有该范围的关键字";
@@ -893,6 +1022,7 @@ class BPlusTree {
     while (!q.empty()) {
       BNode<T> *temp = q.front();
       q.pop();
+      shared_lock<shared_mutex> r_lock(temp->getMutex());
       temp->outputAllKeys(bfsSeq);
       if (!temp->isLeaf()) {
         InnerBNode<T> *tempInner = static_cast<InnerBNode<T> *>(temp);
@@ -914,9 +1044,10 @@ class BPlusTree {
    *
    */
   vector<T> OutPutAllTheKeys() const {
-    const LeafBNode<T> *p = _Head;
+    LeafBNode<T> *p = _Head;
     vector<T> allKeySeq;
     while (p) {
+      shared_lock<shared_mutex> r_lock(p->getMutex());
       p->outputAllKeys(allKeySeq);
       p = p->getNext();
     }
@@ -1028,6 +1159,7 @@ class BPlusTree {
   const size_type _MAX_SIZE;
   LeafBNode<T> *_Head = nullptr;
   string _name;
+  shared_mutex _mutex;
 };
 
 #endif

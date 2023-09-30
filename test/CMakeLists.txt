@@ -1,5 +1,5 @@
-# add_library(performance_test STATIC performanceTest.cpp)
-# include_directories(${CMAKE_SOURCE_DIR}/test/include)
+add_library(performance_test STATIC performanceTest.cpp)
+include_directories(${CMAKE_SOURCE_DIR}/test/include)
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${CMAKE_SOURCE_DIR}/proto)
 
@@ -17,7 +17,7 @@ target_link_libraries(
 )
 
 include(GoogleTest)
-gtest_discover_tests(unittest)
+# gtest_discover_tests(unittest)
 
 find_package(Protobuf REQUIRED)
 

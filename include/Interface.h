@@ -9,6 +9,7 @@
 
 #include "B_Plus_Tree.h"
 #include "bplustree.pb.h"
+#include "performanceTest.h"
 /**
  * @brief 初始化指令列表
  */
@@ -155,12 +156,12 @@ void interface() {
         cerr << "open error:./" + tree_name + "/" + tree_name << endl;
       }
     } else if (option == string("test")) {
-      if (!tree) {
-        tree = new BPlusTree<int>(10, "testTree");
-      }
-      for (int i = 0; i < 100; i++) {
-        pair<int, uint64_t> data = make_pair(i, i);
-        tree->B_Plus_Tree_Insert(data);
+      performanceTest();
+    } else if (option == string("unittest")) {
+      int id = fork();
+      if (id == 0) {
+        system("../test/unittest");
+        exit(0);
       }
     } else {
       cout << "还没有这个指令" << endl;
