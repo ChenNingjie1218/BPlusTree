@@ -3,9 +3,9 @@
 #include <utility>
 
 #include "B_Plus_Tree.h"
-#define MAX_DEGREE 1000        //最大度数
-#define MIN_DEGREE 3           //最小度数
-#define NUMBER_SAMPLES 100000  //样本数量
+#define MAX_DEGREE 1000         //最大度数
+#define MIN_DEGREE 3            //最小度数
+#define NUMBER_SAMPLES 1000000  //样本数量
 vector<int> srcData;
 void initVector() {
   for (int i = 0; i < NUMBER_SAMPLES; ++i) {
@@ -95,7 +95,7 @@ void performanceTest() {
   fw.open("./performance_insert_concurrent", ios::out);
   vector<thread> threads;
   for (int i = 1; i < 100; ++i) {
-    BPlusTree<int> testTree(50, "testTree");
+    BPlusTree<int> testTree(100, "testTree");
     threads.clear();
     int perCount = NUMBER_SAMPLES / i;  //每个线程要插的数量
     auto start = std::chrono::high_resolution_clock::now();
@@ -132,7 +132,7 @@ void performanceTest() {
   }
   fw.close();
 
-  BPlusTree<int> *testTree = TestInsert(50);
+  BPlusTree<int> *testTree = TestInsert(100);
   //---------------------------并发查询--------------------------
   system("rm -rf ./performance_search_concurrent");
   fw.open("./performance_search_concurrent", ios::out);
@@ -171,7 +171,7 @@ void performanceTest() {
   system("rm -rf ./performance_delete_concurrent");
   fw.open("./performance_delete_concurrent", ios::out);
   for (int i = 1; i < 100; ++i) {
-    testTree = TestInsert(50);
+    testTree = TestInsert(100);
     threads.clear();
     int perCount = NUMBER_SAMPLES / i;  //每个线程要删的数量
     auto start = std::chrono::high_resolution_clock::now();
