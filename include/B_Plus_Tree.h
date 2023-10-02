@@ -152,9 +152,10 @@ class BNode {
   /* 范围查询关键字 */
   virtual void searchKeyForRange(const T &l, const T &r,
                                  vector<pair<T, uint64_t>> &seq,
-                                 const bool &continueFlag = false) = 0;
+                                 const bool &continueFlag = false,
+                                 bool test = false) = 0;
   /* 输出所有关键字 */
-  virtual void outputAllKeys(vector<T> &seq) = 0;
+  virtual void outputAllKeys(vector<T> &seq, bool test = false) = 0;
   /* 关键字分裂 */
   virtual void keySplit(const bool &isLeft, const size_type &MAX_SIZE) = 0;
   /* 获取关键字 */
@@ -317,18 +318,25 @@ class LeafBNode : public BNode<T> {
   }
 
   /* 输出所有关键字 */
-  void outputAllKeys(vector<T> &seq) override {
-    cout << " [";
-    for (size_type i = 0; i < this->_keyNum; ++i) {
-      seq.push_back(this->_key[i]);
-      cout << " <" << this->_key[i] << ", " << *_value[i] << ">";
+  void outputAllKeys(vector<T> &seq, bool test = false) override {
+    if (test) {
+      for (size_type i = 0; i < this->_keyNum; ++i) {
+        seq.push_back(this->_key[i]);
+      }
+    } else {
+      cout << " [";
+      for (size_type i = 0; i < this->_keyNum; ++i) {
+        seq.push_back(this->_key[i]);
+        cout << " <" << this->_key[i] << ", " << *_value[i] << ">";
+      }
+      cout << " ]";
     }
-    cout << " ]";
   }
 
   /* 范围查询关键字 */
   void searchKeyForRange(const T &l, const T &r, vector<pair<T, uint64_t>> &seq,
-                         const bool &continueFlag = false) override {
+                         const bool &continueFlag = false,
+                         bool test = false) override {
     size_type index = 0;
     if (!continueFlag) {
       index = this->getInsertIndex(l);
@@ -336,13 +344,15 @@ class LeafBNode : public BNode<T> {
 
     while (index < this->_keyNum && this->_key[index] < r) {
       seq.push_back(make_pair(this->_key[index], *_value[index]));
-      cout << " <" << this->_key[index] << ", " << *_value[index] << ">";
+      if (!test) {
+        cout << " <" << this->_key[index] << ", " << *_value[index] << ">";
+      }
       ++index;
     }
     this->_mutex.unlock_shared();
     if (_next && index == this->_keyNum) {
       _next->getMutex().lock_shared();
-      _next->searchKeyForRange(l, r, seq, true);
+      _next->searchKeyForRange(l, r, seq, true, test);
     }
   }
 
@@ -502,7 +512,7 @@ class InnerBNode : public BNode<T> {
     p.push_back(root);
     p.push_back(info.first);
   }
-  /* 序列化构造函数*/
+  /* 反序列化构造函数*/
   InnerBNode(const bplustree::BNode &pb_bnode, string dir)
       : BNode<T>(pb_bnode) {
     typename vector<BNode<T> *>::size_type child_size = pb_bnode._child_size();
@@ -722,31 +732,38 @@ class InnerBNode : public BNode<T> {
 
   /* 范围查询关键字 */
   void searchKeyForRange(const T &l, const T &r, vector<pair<T, uint64_t>> &seq,
-                         const bool &continueFlag = false) override {
+                         const bool &continueFlag = false,
+                         bool test = false) override {
     size_type index = this->getInsertIndex(l);
     if (index < this->_keyNum && l == this->_key[index]) {
       p[index + 1]->getMutex().lock_shared();
       this->_mutex.unlock_shared();
-      p[index + 1]->searchKeyForRange(l, r, seq);
+      p[index + 1]->searchKeyForRange(l, r, seq, false, test);
     } else {
       p[index]->getMutex().lock_shared();
       this->_mutex.unlock_shared();
-      p[index]->searchKeyForRange(l, r, seq);
+      p[index]->searchKeyForRange(l, r, seq, false, test);
     }
   }
 
   /* 输出所有关键字 */
-  void outputAllKeys(vector<T> &seq) override {
+  void outputAllKeys(vector<T> &seq, bool test = false) override {
     shared_lock<shared_mutex> r_lock(this->_mutex);
-    cout << " [";
-    for (size_type i = 0; i < this->_keyNum; ++i) {
-      if (i) {
-        cout << " ";
+    if (test) {
+      for (size_type i = 0; i < this->_keyNum; ++i) {
+        seq.push_back(this->_key[i]);
       }
-      cout << this->_key[i];
-      seq.push_back(this->_key[i]);
+    } else {
+      cout << " [";
+      for (size_type i = 0; i < this->_keyNum; ++i) {
+        if (i) {
+          cout << " ";
+        }
+        cout << this->_key[i];
+        seq.push_back(this->_key[i]);
+      }
+      cout << "]";
     }
-    cout << "]";
   }
   /* 分裂关键字和指针 */
   void keySplit(const bool &isLeft, const size_type &MAX_SIZE) override {
@@ -995,15 +1012,17 @@ class BPlusTree {
    * @param l 范围左域
    * @param r 范围右域
    */
-  vector<pair<T, uint64_t>> B_Plus_Tree_Search_For_Range(const T &l,
-                                                         const T &r) const {
+  vector<pair<T, uint64_t>> B_Plus_Tree_Search_For_Range(
+      const T &l, const T &r, bool test = false) const {
     vector<pair<T, uint64_t>> rangeSearchResult;
     _root->getMutex().lock_shared();
-    _root->searchKeyForRange(l, r, rangeSearchResult);
-    if (rangeSearchResult.empty()) {
+    _root->searchKeyForRange(l, r, rangeSearchResult, false, test);
+    if (rangeSearchResult.empty() && !test) {
       cout << "没有该范围的关键字";
     }
-    cout << endl;
+    if (!test) {
+      cout << endl;
+    }
     return rangeSearchResult;
   }
 
@@ -1013,7 +1032,7 @@ class BPlusTree {
    * @tparam x 树的根节点
    *
    */
-  vector<T> BFS() const {
+  vector<T> BFS(bool test = false) const {
     typedef typename vector<T>::size_type size_type;
     queue<BNode<T> *> q;
     q.push(_root);
@@ -1023,7 +1042,7 @@ class BPlusTree {
       BNode<T> *temp = q.front();
       q.pop();
       shared_lock<shared_mutex> r_lock(temp->getMutex());
-      temp->outputAllKeys(bfsSeq);
+      temp->outputAllKeys(bfsSeq, test);
       if (!temp->isLeaf()) {
         InnerBNode<T> *tempInner = static_cast<InnerBNode<T> *>(temp);
         for (size_type i = 0; i < tempInner->getChildNum(); ++i) {
@@ -1031,11 +1050,15 @@ class BPlusTree {
         }
         if (temp == lastLayer) {
           lastLayer = tempInner->getChild(tempInner->getChildNum() - 1);
-          cout << endl;
+          if (!test) {
+            cout << endl;
+          }
         }
       }
     }
-    cout << endl;
+    if (!test) {
+      cout << endl;
+    }
     return bfsSeq;
   }
 
@@ -1043,15 +1066,17 @@ class BPlusTree {
    * @brief 全遍历叶子节点
    *
    */
-  vector<T> OutPutAllTheKeys() const {
+  vector<T> OutPutAllTheKeys(bool test = false) const {
     LeafBNode<T> *p = _Head;
     vector<T> allKeySeq;
     while (p) {
       shared_lock<shared_mutex> r_lock(p->getMutex());
-      p->outputAllKeys(allKeySeq);
+      p->outputAllKeys(allKeySeq, test);
       p = p->getNext();
     }
-    cout << endl;
+    if (!test) {
+      cout << endl;
+    }
     return allKeySeq;
   }
   /* 重置树 */

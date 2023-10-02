@@ -50,6 +50,17 @@ MySQL
 ![Alt text](res/%E6%9F%A5%E6%89%BE.png)
 #### 2.2.4 范围查找
 ![Alt text](res/%E8%8C%83%E5%9B%B4%E6%9F%A5%E6%89%BE.png)
+#### 2.2.5 序列化
+![Alt text](res/%E5%BA%8F%E5%88%97%E5%8C%96.png)
+#### 2.2.6 反序列化
+![Alt text](res/%E5%8F%8D%E5%BA%8F%E5%88%97%E5%8C%96.png)
+#### 2.2.7 并发控制
+##### 2.2.7.1 插入并发
+![Alt text](res/%E6%8F%92%E5%85%A5%E5%B9%B6%E5%8F%91.png)
+##### 2.2.7.2 查询并发
+![Alt text](res/%E6%9F%A5%E8%AF%A2%E5%B9%B6%E5%8F%91.png)
+##### 2.2.7.3 删除并发
+![Alt text](res/%E5%88%A0%E9%99%A4%E5%B9%B6%E5%8F%91.png)
 ## 3 代码实现
 
 ### 3.1 目录组织
@@ -57,13 +68,16 @@ MySQL
 介绍一下各目录的作用。
 .
 ├── build
-│
-├── doc
-│&emsp;&emsp;└── res
-├── include
-├── src
-└── test
-&emsp;&emsp;&emsp;└── include
+│   
+├── doc:报告
+│&emsp;&emsp;└── res:报告用的图
+├── include:头文件
+├── proto:proto文件生成的代码等
+├── python:性能测试数据画图
+├── src:源码
+└── test:测试源码
+&emsp;&emsp;&emsp;└── include：测试源码用的头文件
+
 
 ### 3.2 安装&测试
 说明如何编译、安装、运行测试。
@@ -421,8 +435,68 @@ void interface();
 ----------------已删除<90, 90>-------------
  [ ]
 ```
+#### 4.1.5 序列化与反序列化测试
+测试用例:
+```
+将查找时用的查找树序列化后，用另一个变量存反序列化后树
+与测试树进行层序遍历和全遍历输出的对比。
+```
 
+#### 4.1.6 并发测试
+测试用例:
+```
+向查找树用三个线程并发插入100个数据（100~199、200~299、300~399）
+同时两个线程查找100个数据（0~99、100~199）
+
+全遍历叶子节点，看是否插入正确
+
+将刚刚的结构树用三个线程并发删除100个数据(100~199、200~299、300~399)
+全遍历叶子节点，看是否删除正确
+```
+#### 4.1.7 测试结果
+```
+[==========] Running 7 tests from 2 test suites.
+[----------] Global test environment set-up.
+[----------] 2 tests from NULLTREE
+[ RUN      ] NULLTREE.insert_test
+[       OK ] NULLTREE.insert_test (0 ms)
+[ RUN      ] NULLTREE.delete_test
+[       OK ] NULLTREE.delete_test (0 ms)
+[----------] 2 tests from NULLTREE (0 ms total)
+
+[----------] 5 tests from SEARCH_TREE
+[ RUN      ] SEARCH_TREE.search_test
+[       OK ] SEARCH_TREE.search_test (0 ms)
+[ RUN      ] SEARCH_TREE.range_search_test
+[       OK ] SEARCH_TREE.range_search_test (0 ms)
+[ RUN      ] SEARCH_TREE.output_all_the_keys_test
+[       OK ] SEARCH_TREE.output_all_the_keys_test (0 ms)
+[ RUN      ] SEARCH_TREE.serialize_and_deserialize_test
+[       OK ] SEARCH_TREE.serialize_and_deserialize_test (26 ms)
+[ RUN      ] SEARCH_TREE.Concurrent
+[       OK ] SEARCH_TREE.Concurrent (129 ms)
+[----------] 5 tests from SEARCH_TREE (163 ms total)
+
+[----------] Global test environment tear-down
+[==========] 7 tests from 2 test suites ran. (163 ms total)
+[  PASSED  ] 7 tests.
+```
 ### 4.2 性能测试
+#### 4.2.1 不同度数下的性能测试
+测试用例:
+```
+最小度数为3，最大度数为1000，步长为5，样本数量100000
+```
+插入结果图:
+
+查询结果图:
+
+删除结果图:
+#### 4.2.2 不同线程数下的性能测试
+
+```
+
+```
 
 ## 5 总结
 

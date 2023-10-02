@@ -26,7 +26,7 @@ void TestSearch(BPlusTree<int> *bplustree) {
     bplustree->B_Plus_Tree_Search(srcData[i]);
   }
   bplustree->B_Plus_Tree_Search(-1);
-  bplustree->B_Plus_Tree_Search(10001);
+  bplustree->B_Plus_Tree_Search(NUMBER_SAMPLES + 1);
 }
 
 void TestDelete(BPlusTree<int> *bplustree) {
@@ -93,9 +93,10 @@ void performanceTest() {
   //---------------------------并发插入--------------------------
   system("rm -rf ./performance_insert_concurrent");
   fw.open("./performance_insert_concurrent", ios::out);
+  vector<thread> threads;
   for (int i = 1; i < 100; ++i) {
-    BPlusTree<int> testTree(100, "testTree");
-    vector<thread> threads;
+    BPlusTree<int> testTree(50, "testTree");
+    threads.clear();
     int perCount = NUMBER_SAMPLES / i;  //每个线程要插的数量
     auto start = std::chrono::high_resolution_clock::now();
     for (int j = 0; j < i; ++j) {
@@ -131,12 +132,12 @@ void performanceTest() {
   }
   fw.close();
 
-  BPlusTree<int> *testTree = TestInsert(100);
+  BPlusTree<int> *testTree = TestInsert(50);
   //---------------------------并发查询--------------------------
   system("rm -rf ./performance_search_concurrent");
   fw.open("./performance_search_concurrent", ios::out);
   for (int i = 1; i < 100; ++i) {
-    vector<thread> threads;
+    threads.clear();
     int perCount = NUMBER_SAMPLES / i;  //每个线程要查的数量
     auto start = std::chrono::high_resolution_clock::now();
     for (int j = 0; j < i; ++j) {
@@ -170,8 +171,8 @@ void performanceTest() {
   system("rm -rf ./performance_delete_concurrent");
   fw.open("./performance_delete_concurrent", ios::out);
   for (int i = 1; i < 100; ++i) {
-    testTree = TestInsert(100);
-    vector<thread> threads;
+    testTree = TestInsert(50);
+    threads.clear();
     int perCount = NUMBER_SAMPLES / i;  //每个线程要删的数量
     auto start = std::chrono::high_resolution_clock::now();
     for (int j = 0; j < i; ++j) {
@@ -180,7 +181,7 @@ void performanceTest() {
           testTree->B_Plus_Tree_Delete(srcData[j * perCount + k]);
         };
         if (j == i - 1) {
-          //最后一个线程，把剩余要查的删完
+          //最后一个线程，把剩余要删的删完
           int count = (j + 1) * perCount;
           while (count < NUMBER_SAMPLES) {
             testTree->B_Plus_Tree_Delete(srcData[count]);
