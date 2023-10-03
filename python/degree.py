@@ -1,10 +1,10 @@
 import matplotlib.pyplot as plt
 
 # 准备数据
-x = list(range(3, 1001, 5))
-y_insert = [float(line.strip()) for line in open('../build/src/performance_insert')]
-y_search = [float(line.strip()) for line in open('../build/src/performance_search')]
-y_delete = [float(line.strip()) for line in open('../build/src/performance_delete')]
+x = list(range(3, 400, 5))
+y_insert = [float(line.strip()) for line in open('build/test/performance_insert')]
+y_search = [float(line.strip()) for line in open('build/test/performance_search')]
+y_delete = [float(line.strip()) for line in open('build/test/performance_delete')]
 titles = ['insert', 'search', 'delete']
 # 创建一个图形窗口
 fig, axs = plt.subplots(3)
@@ -23,7 +23,7 @@ for i in range(len(axs)):
 # # 设置标题
 # fig.suptitle('performance')
 # 保存图像
-plt.savefig('../doc/res/performance')
+plt.savefig('doc/res/performance')
 
 # 显示图形
 plt.show()

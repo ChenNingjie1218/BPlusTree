@@ -1,17 +1,14 @@
 #include "performanceTest.h"
-
-#include <utility>
-
-#include "B_Plus_Tree.h"
-#define MAX_DEGREE 1000         //最大度数
-#define MIN_DEGREE 3            //最小度数
-#define NUMBER_SAMPLES 1000000  //样本数量
 vector<int> srcData;
 void initVector() {
   for (int i = 0; i < NUMBER_SAMPLES; ++i) {
     srcData.push_back(i);
   }
-  random_shuffle(srcData.begin(), srcData.end());
+  // 使用随机种子初始化随机数生成器
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  // 使用 std::shuffle 进行随机排序
+  std::shuffle(srcData.begin(), srcData.end(), gen);
 }
 BPlusTree<int> *TestInsert(int degree) {
   BPlusTree<int> *bplustree = new BPlusTree<int>(degree, "testTree");
@@ -94,8 +91,8 @@ void performanceTest() {
   system("rm -rf ./performance_insert_concurrent");
   fw.open("./performance_insert_concurrent", ios::out);
   vector<thread> threads;
-  for (int i = 1; i < 100; ++i) {
-    BPlusTree<int> testTree(100, "testTree");
+  for (int i = 1; i < NUMBER_THREADS; ++i) {
+    BPlusTree<int> testTree(CONCURRENT_DEGREE, "testTree");
     threads.clear();
     int perCount = NUMBER_SAMPLES / i;  //每个线程要插的数量
     auto start = std::chrono::high_resolution_clock::now();
@@ -132,11 +129,11 @@ void performanceTest() {
   }
   fw.close();
 
-  BPlusTree<int> *testTree = TestInsert(100);
+  BPlusTree<int> *testTree = TestInsert(CONCURRENT_DEGREE);
   //---------------------------并发查询--------------------------
   system("rm -rf ./performance_search_concurrent");
   fw.open("./performance_search_concurrent", ios::out);
-  for (int i = 1; i < 100; ++i) {
+  for (int i = 1; i < NUMBER_THREADS; ++i) {
     threads.clear();
     int perCount = NUMBER_SAMPLES / i;  //每个线程要查的数量
     auto start = std::chrono::high_resolution_clock::now();
@@ -170,8 +167,8 @@ void performanceTest() {
   //---------------------------并发删除--------------------------
   system("rm -rf ./performance_delete_concurrent");
   fw.open("./performance_delete_concurrent", ios::out);
-  for (int i = 1; i < 100; ++i) {
-    testTree = TestInsert(100);
+  for (int i = 1; i < NUMBER_THREADS; ++i) {
+    testTree = TestInsert(CONCURRENT_DEGREE);
     threads.clear();
     int perCount = NUMBER_SAMPLES / i;  //每个线程要删的数量
     auto start = std::chrono::high_resolution_clock::now();
@@ -208,4 +205,9 @@ void performanceTest() {
   fw.close();
 
   cout << "------------------性能测试结束---------------" << endl;
+}
+
+int main() {
+  performanceTest();
+  return 0;
 }

@@ -16,8 +16,6 @@ void interfaceInit() {
   op["reset"] = "重置树 eg:reset";
   op["serialize"] = "序列化树 eg:serialize";
   op["deserialize"] = "反序列化某个树 eg:serialize testTree";
-  op["test"] = "性能测试";
-  op["unittest"] = "单元测试";
 }
 
 void help() {

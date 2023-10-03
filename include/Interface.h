@@ -25,6 +25,7 @@ void help();
 template <typename T>
 void interface() {
   interfaceInit();
+  help();
   string cmd;
   string option;
   BPlusTree<T> *tree = nullptr;
@@ -155,15 +156,22 @@ void interface() {
       } else {
         cerr << "open error:./" + tree_name + "/" + tree_name << endl;
       }
-    } else if (option == string("test")) {
-      performanceTest();
-    } else if (option == string("unittest")) {
-      int id = fork();
-      if (id == 0) {
-        system("../test/unittest");
-        exit(0);
-      }
-    } else {
+    }
+
+    // else if (option == string("test")) {
+    //   int id = fork();
+    //   if (id == 0) {
+    //     system("../test/performancetest");
+    //     exit(0);
+    //   }
+    // } else if (option == string("unittest")) {
+    //   int id = fork();
+    //   if (id == 0) {
+    //     system("../test/unittest");
+    //     exit(0);
+    //   }
+    // }
+    else {
       cout << "还没有这个指令" << endl;
     }
     // cout << "请输入指令:" << endl;

@@ -81,82 +81,180 @@ MySQL
 
 ### 3.2 安装&测试
 说明如何编译、安装、运行测试。
+- 编译
+```
+在项目根目录下
+cmake -S . -B ./build
+cmake --build ./build
+```
+- 安装
+```
+可能需要用到的软件:
+sudo apt install protobuf-compiler
+sudo apt-get install uuid-dev
+sudo apt-get install python3-pip
+pip install gprof2dot
+```
+- 运行
+```
+在项目根目录下:
+chmod +x run.sh
+./run.sh
+```
+- 测试
+```
+在项目根目录下:
+//单元测试
+chmod +x unittest.sh
+./unittest.sh
 
+//性能测试
+chmod +x performancetest.sh
+./performancetest.sh
+
+//性能测试结果画图输出到doc/res下:
+chmod +x data2plot.sh
+./data2plot.sh
+```
 ### 3.3 接口
 
 公共接口。
 ```
 template<typename T>
 void interface();
-
-
 ```
 ### 3.4 关键代码
 
 重要或有意思的代码片段。
-#### 3.4.1 分裂时使用的特殊构造函数
-```
-  /**
-   * @brief 分裂用的特殊构造函数
-   * @param SIZE 从_key的多少位开始
-   * */
-  BNode(BNode<T> *bnode, const size_type &SIZE)
-      : _isLeaf(bnode->isLeaf()),
-        _key(make_move_iterator(bnode->_key.begin() + SIZE),
-             make_move_iterator(bnode->_key.end())) {
-    updateKeyNum();
-  }
 
-  /* 分裂用的特殊构造函数 */
-  LeafBNode(LeafBNode *&leafbnode, const size_type &MAX_SIZE)
-      : BNode<T>(leafbnode, MAX_SIZE / 2),
-        _next(leafbnode->_next),
-        _prev(leafbnode),
-        _value(make_move_iterator(leafbnode->_value.begin() + MAX_SIZE / 2),
-               make_move_iterator(leafbnode->_value.end())) {}
 
-  /* 内部节点分裂用的特殊构造函数 */
-  InnerBNode(InnerBNode<T> *&innerbnode, const size_type &MAX_SIZE)
-      : BNode<T>(innerbnode, MAX_SIZE / 2 + 1),
-        p(make_move_iterator(innerbnode->p.begin() + MAX_SIZE / 2 + 1),
-          make_move_iterator(innerbnode->p.end())) {}
-
-  //顶层分裂调用
-  InnerBNode(BNode<T> *const &root, const size_type &MAX_SIZE)
-      : BNode<T>(false) {
-    pair<BNode<T> *, T> info = split(root, MAX_SIZE);
-    this->addKey(info.second);
-    p.push_back(root);
-    p.push_back(info.first);
-  }
-```
-#### 3.4.2 移动后源对象即时放弃所有权
-```
-  /* 合并时，value移动后清空value的vector，以免析构的时候把值清了*/
-  void clearValues() { _value.clear(); }
-```
-
-#### 3.4.3 由父节点控制分裂
+#### 3.4.1 由父节点控制分裂、合并、借
 ```
   /* 插入关键字 */
-  void insertKey(const pair<T, uint64_t> &kv,
-                 const size_type &MAX_SIZE) override {
+  void insertKey(const pair<T, uint64_t> &kv, const size_type &MAX_SIZE,
+                 deque<shared_mutex *> &q_w_lock) override {
+    if (this->isSafe(MAX_SIZE, true)) {
+      while (q_w_lock.size() != 1) {
+        q_w_lock.front()->unlock();
+        q_w_lock.pop_front();
+      }
+    }
     size_type insertIndex = this->getInsertIndex(kv.first);
+    BNode<T> *insertNode = p[insertIndex];
+    insertNode->getMutex().lock();
+    q_w_lock.push_back(&insertNode->getMutex());
     //默认不插入相等的key，都是左插
-    p[insertIndex]->insertKey(kv, MAX_SIZE);
+    insertNode->insertKey(kv, MAX_SIZE, q_w_lock);
 
     //孩子插入后需要分裂
-    if (p[insertIndex]->getKeyNum() == MAX_SIZE) {
-      pair<BNode<T> *, T> info = split(p[insertIndex], MAX_SIZE);
+    if (q_w_lock.size() > 1 && insertNode->getKeyNum() == MAX_SIZE) {
+      pair<BNode<T> *, T> info = split(insertNode, MAX_SIZE);
       insertIndex = this->addKey(info.second);
       p.insert(p.begin() + insertIndex + 1, info.first);
     }
+
+    if (!q_w_lock.empty()) {
+      q_w_lock.back()->unlock();
+      q_w_lock.pop_back();
+    }
+  }
+  
+  /* 删除关键字 */
+  T deleteKey(const T &k, const size_type &MAX_SIZE,
+              deque<shared_mutex *> &q_w_lock, bool &hasNewKey) override {
+    if (!hasNewKey && this->isSafe(MAX_SIZE, false)) {
+      while (q_w_lock.size() != 1) {
+        q_w_lock.front()->unlock();
+        q_w_lock.pop_front();
+      }
+    }
+
+    size_type deleteIndex = this->getInsertIndex(k);
+    T newKey;
+    BNode<int> *deleteChild = p[deleteIndex];
+    if (deleteIndex < this->_keyNum && k == this->_key[deleteIndex]) {
+      ++deleteIndex;
+      //遇见关键字向右找
+      deleteChild = p[deleteIndex];
+      deleteChild->getMutex().lock();
+      q_w_lock.push_back(&deleteChild->getMutex());
+      hasNewKey = true;
+      newKey = deleteChild->deleteKey(k, MAX_SIZE, q_w_lock, hasNewKey);
+      this->_key[deleteIndex - 1] = newKey;
+    } else {
+      deleteChild->getMutex().lock();
+      q_w_lock.push_back(&deleteChild->getMutex());
+      newKey = deleteChild->deleteKey(k, MAX_SIZE, q_w_lock, hasNewKey);
+    }
+    //孩子删除后需要借
+    if (q_w_lock.size() > 1 &&
+        deleteChild->getKeyNum() < ceil(1.0 * MAX_SIZE / 2) - 1) {
+      q_w_lock.pop_back();
+      if (deleteIndex + 1 < p.size()) {
+        p[deleteIndex + 1]->getMutex().lock();
+      }
+      if (deleteIndex) {
+        p[deleteIndex - 1]->getMutex().lock();
+      }
+      if (deleteIndex + 1 < p.size() &&
+          p[deleteIndex + 1]->getKeyNum() > ceil(1.0 * MAX_SIZE / 2) - 1) {
+        if (deleteIndex) {
+          p[deleteIndex - 1]->getMutex().unlock();
+        }
+        //找右边兄弟借
+        this->_key[deleteIndex] = deleteChild->borrowKey(
+            p[deleteIndex + 1], true, this->_key[deleteIndex]);
+        p[deleteIndex + 1]->getMutex().unlock();
+        deleteChild->getMutex().unlock();
+      } else if (deleteIndex && p[deleteIndex - 1]->getKeyNum() >
+                                    ceil(1.0 * MAX_SIZE / 2) - 1) {
+        //找左边兄弟借
+        if (deleteIndex + 1 < p.size()) {
+          p[deleteIndex + 1]->getMutex().unlock();
+        }
+        this->_key[deleteIndex - 1] = deleteChild->borrowKey(
+            p[deleteIndex - 1], false, this->_key[deleteIndex - 1]);
+        p[deleteIndex - 1]->getMutex().unlock();
+        deleteChild->getMutex().unlock();
+      } else if (deleteIndex + 1 < p.size()) {
+        if (deleteIndex) {
+          p[deleteIndex - 1]->getMutex().unlock();
+        }
+        //跟右兄弟合并
+        merge(deleteChild, p[deleteIndex + 1], this->getKey(deleteIndex));
+        deleteChild->getMutex().unlock();
+        this->_key.erase(this->_key.begin() + deleteIndex);
+        this->updateKeyNum();
+        p.erase(p.begin() + deleteIndex + 1);
+#ifndef NDEBUG
+        cout << "-------------------跟右兄弟合并----------------------" << endl;
+#endif
+      } else {
+        if (deleteIndex + 1 < p.size()) {
+          p[deleteIndex + 1]->getMutex().unlock();
+        }
+        //跟左兄弟合并
+        merge(p[deleteIndex - 1], deleteChild, this->getKey(deleteIndex - 1));
+        p[deleteIndex - 1]->getMutex().unlock();
+        this->_key.erase(this->_key.begin() + deleteIndex - 1);
+        this->updateKeyNum();
+        p.erase(p.begin() + deleteIndex);
+#ifndef NDEBUG
+        cout << "-------------------跟左兄弟合并----------------------" << endl;
+#endif
+      }
+    } else if (!q_w_lock.empty()) {
+      q_w_lock.back()->unlock();
+      q_w_lock.pop_back();
+    }
+    return newKey;
   }
 ```
 ### 3.5 程序分析
 
 内存泄漏分析，gprof/perf 代码性能分析。
-
+- gprof
+![Alt text](res/gprof.png)
 ## 4 测试
 
 ### 4.1 单元测试
@@ -485,19 +583,17 @@ void interface();
 #### 4.2.1 不同度数下的性能测试
 测试用例:
 ```
-最小度数为3，最大度数为1000，步长为5，样本数量100000
+最小度数为3，最大度数为1000，步长为5，样本数量1000000
 ```
-插入结果图:
-
-查询结果图:
-
-删除结果图:
+结果图:
+![Alt text](res/performance.png)
 #### 4.2.2 不同线程数下的性能测试
-
+测试用例:
 ```
-
+最小线程数为1，最大线程数为99，步长为1，样本数量为1000000，样本度数为100
 ```
-
+结果图:
+![Alt text](res/performance_thread.png)
 ## 5 总结
 
 总结困难问题的解决思路，以及收获与心得体会。
@@ -530,3 +626,18 @@ void interface();
 封装后可以实现一个B+树对象，一个度。但是，节点类如何访问到该成员？（在节点类内丢失了树类对象，无法使用`get`方法获取）
 解决方案1：在节点类需要用到的地方，都传入该参数，但会使节点类的各个成员函数参数列表显得很复杂。(采用)
 解决方案2：为节点类添加成员，虽然可以解决问题，但是浪费内存。
+
+- 序列化反序列化
+问题1：没找到一种好的方法利用protobuf对模板进行序列化。目前仅支持一种类型的序列化。原本想的是利用`is_same<type1,type2>::value`来判断，但是进入分支用反序列化的数据构造时编译器会报错(我接受`int`但是你可能传的`string`,即编译器不能通过分支自动推断类型的感觉)。并且在构造函数**初始化列表**中，想使用三目运算符来选择使用，编译器也会报错(返回的两种类型不一样)。
+
+问题2：采用的全局序列化，每次只能序列化、反序列化整棵树，虽然采用了为树起名、为节点分配`uuid`将树和每个节点存放在不同文件，同一个文件夹下的方法，但实现局部序列化仍然较为困难。特别是到底局部序列化多少结点，`next`和`prev`的使用等，想到的方案是在所有用孩子节点、`next`和`prev`等东西的地方判断是否已经序列化，但是会大量修改代码，工作量巨大。并且何时写回也成了问题，每次改就写回效率底下，延迟写回又会有最终一致性问题，问题规模变得复杂。
+
+- 并发编程的问题
+问题1：学习了`RAII`思想，但并不是一定要用`RAII`思想。特别要注意使用`shared_lock`和`unique_lock`时，主动调用了析构函数，在它析构时还会自动调用析构函数。解决方案1：最好调用`unlock()`方法，这样析构时不会再进入它析构函数中的`if`分支（`_M_owns`在主动调用`unlock()`时会改变，在析构时不会）。
+
+问题2：忽略了锁树，直接从根节点开始锁。如果是删除将根节点删了，然后解锁，其他等待根节点的线程会找不到对象。
+
+问题3：由于采取的递归算法，由父节点判断孩子是否需要分裂、合并、借等操作。问题之一是：此时用的孩子还是不是原来的那个孩子（比如之前只存了孩子的index，此时的p[index]已经不是原来那个了而被其他线程修改了内容。）。问题二是：递归回去路上，仍旧在访问该节点的内容，跟是否持锁无关。
+解决方案1：用临时变量存下孩子，后面都使用这个变量。访问内容时，首先判断持锁队列是否`size`大于1（至少要有孩子的锁和自己的锁），这样你才会是要进入分裂、合并、借的操作的那个线程。
+
+问题4：**范围查找与其他操作的死锁问题没有解决**
